@@ -1,22 +1,21 @@
-import { app, ipcMain, BrowserWindow, dialog } from "electron";
-import path from "node:path";
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let mainWindow = null;
-function createMainWindow() {
-  const iconPathDev = path.join(process.cwd(), "build", "icon.png");
-  const windowIcon = process.platform === "win32" || process.platform === "linux" ? iconPathDev : void 0;
-  mainWindow = new BrowserWindow({
-    fullscreen: false,
+import { app as p, ipcMain as u, BrowserWindow as y, dialog as k } from "electron";
+import t from "node:path";
+import a from "node:fs";
+import { fileURLToPath as S } from "node:url";
+const w = t.dirname(S(import.meta.url));
+let d = null;
+function F() {
+  const s = t.join(process.cwd(), "build", "icon.png"), e = process.platform === "win32" || process.platform === "linux" ? s : void 0;
+  if (d = new y({
+    fullscreen: !1,
     backgroundColor: "#000000",
-    show: false,
-    icon: windowIcon,
+    show: !1,
+    icon: e,
     // Use hidden inset titleBar on macOS so traffic lights float in content
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : void 0,
     trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 14 } : void 0,
     webPreferences: {
-      contextIsolation: true,
+      contextIsolation: !0,
       // When running un-packaged (during development), the compiled preload script
       // lives in the project-root/dist-electron folder. After the app is
       // packaged the preload will sit next to the compiled main.js inside the
@@ -24,183 +23,233 @@ function createMainWindow() {
       // the renderer always gets the preload script and therefore the
       // window.api bridge.
       preload: (() => {
-        if (app.isPackaged) {
-          return path.join(__dirname, "preload.js");
-        }
-        const devPath1 = path.join(__dirname, "../dist-electron/preload.js");
-        const devPath2 = path.join(__dirname, "preload.js");
-        return fs.existsSync(devPath1) ? devPath1 : devPath2;
+        if (p.isPackaged)
+          return t.join(w, "preload.js");
+        const r = t.join(w, "../dist-electron/preload.js"), o = t.join(w, "preload.js");
+        return a.existsSync(r) ? r : o;
       })()
     }
-  });
-  if (process.platform === "darwin" && !app.isPackaged) {
+  }), process.platform === "darwin" && !p.isPackaged)
     try {
-      app.dock.setIcon(iconPathDev);
+      p.dock.setIcon(s);
     } catch {
     }
-  }
-  const pageUrl = process.env.VITE_DEV_SERVER_URL;
-  if (pageUrl) {
-    mainWindow.loadURL(pageUrl);
-  } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
-  }
-  if (!app.isPackaged) {
+  const i = process.env.VITE_DEV_SERVER_URL;
+  if (i ? d.loadURL(i) : d.loadFile(t.join(w, "../dist/index.html")), !p.isPackaged)
     try {
-      mainWindow.webContents.openDevTools({ mode: "detach" });
+      d.webContents.openDevTools({ mode: "detach" });
     } catch {
     }
-  }
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin")
     try {
-      mainWindow.setTitleBarOverlay({
+      d.setTitleBarOverlay({
         color: "#00000000",
         symbolColor: "#FFFFFF",
         height: 48
       });
     } catch {
     }
-  }
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.maximize();
-    mainWindow?.show();
-  });
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  d.once("ready-to-show", () => {
+    d?.maximize(), d?.show();
+  }), d.on("closed", () => {
+    d = null;
   });
 }
-app.whenReady().then(createMainWindow);
-function getAppSettingsPath() {
-  return path.join(app.getPath("userData"), "app-settings.json");
+p.whenReady().then(F);
+function v() {
+  return t.join(p.getPath("userData"), "app-settings.json");
 }
-function readAppSettings() {
+function f() {
   try {
-    const filePath = getAppSettingsPath();
-    if (!fs.existsSync(filePath)) return {};
-    const raw = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(raw);
+    const s = v();
+    if (!a.existsSync(s)) return {};
+    const e = a.readFileSync(s, "utf-8");
+    return JSON.parse(e);
   } catch {
     return {};
   }
 }
-function writeAppSettings(settings) {
+function P(s) {
   try {
-    const filePath = getAppSettingsPath();
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), "utf-8");
+    const e = v();
+    a.mkdirSync(t.dirname(e), { recursive: !0 }), a.writeFileSync(e, JSON.stringify(s, null, 2), "utf-8");
   } catch {
   }
 }
-async function ensureFolderStructure(rootFolder) {
-  const templatesDir = path.join(rootFolder, "templates");
-  const dailyTasksDir = path.join(rootFolder, "daily tasks");
-  const settingsFile = path.join(rootFolder, "settings.json");
-  await fs.promises.mkdir(templatesDir, { recursive: true });
-  await fs.promises.mkdir(dailyTasksDir, { recursive: true });
+async function x(s) {
+  const e = t.join(s, "templates"), i = t.join(s, "daily tasks"), r = t.join(s, "backgrounds"), o = t.join(s, "settings.json");
+  await a.promises.mkdir(e, { recursive: !0 }), await a.promises.mkdir(i, { recursive: !0 }), await a.promises.mkdir(r, { recursive: !0 });
   try {
-    await fs.promises.access(settingsFile, fs.constants.F_OK);
+    await a.promises.access(o, a.constants.F_OK);
   } catch {
-    await fs.promises.writeFile(settingsFile, "{}\n", "utf-8");
+    await a.promises.writeFile(o, `{}
+`, "utf-8");
   }
 }
-ipcMain.handle("get-saved-folder", async () => {
-  console.log("ipc:get-saved-folder");
-  const settings = readAppSettings();
-  return settings.selectedFolder ?? null;
-});
-ipcMain.handle("select-folder", async () => {
-  console.log("ipc:select-folder invoked");
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
+u.handle("get-saved-folder", async () => (console.log("ipc:get-saved-folder"), f().selectedFolder ?? null));
+u.handle("select-folder", async () => {
+  if (console.log("ipc:select-folder invoked"), !d) return null;
+  const s = await k.showOpenDialog(d, {
     properties: ["openDirectory", "createDirectory"]
   });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  const folderPath = result.filePaths[0];
+  if (s.canceled || s.filePaths.length === 0) return null;
+  const e = s.filePaths[0];
   try {
-    await ensureFolderStructure(folderPath);
+    await x(e);
   } catch {
   }
-  const current = readAppSettings();
-  writeAppSettings({ ...current, selectedFolder: folderPath });
-  console.log("ipc:select-folder selected:", folderPath);
-  return { folderPath };
+  const i = f();
+  return P({ ...i, selectedFolder: e }), console.log("ipc:select-folder selected:", e), { folderPath: e };
 });
-ipcMain.handle("list-daily-tasks", async () => {
-  const settings = readAppSettings();
-  const rootFolder = settings.selectedFolder;
-  if (!rootFolder) return [];
-  const tasksDir = path.join(rootFolder, "daily tasks");
+u.handle("list-daily-tasks", async () => {
+  const e = f().selectedFolder;
+  if (!e) return [];
+  const i = t.join(e, "daily tasks");
   try {
-    const entries = await fs.promises.readdir(tasksDir, {
-      withFileTypes: true
-    });
-    const files = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".json")).map((e) => ({
-      fileName: e.name.replace(/\.json$/i, ""),
-      fullPath: path.join(tasksDir, e.name)
+    return (await a.promises.readdir(i, {
+      withFileTypes: !0
+    })).filter((n) => n.isFile() && n.name.toLowerCase().endsWith(".json")).map((n) => ({
+      fileName: n.name.replace(/\.json$/i, ""),
+      fullPath: t.join(i, n.name)
     }));
-    return files;
   } catch {
     return [];
   }
 });
-ipcMain.handle("list-templates", async () => {
-  const settings = readAppSettings();
-  const rootFolder = settings.selectedFolder;
-  if (!rootFolder) return [];
-  const templatesDir = path.join(rootFolder, "templates");
+u.handle("list-templates", async () => {
+  const e = f().selectedFolder;
+  if (!e) return [];
+  const i = t.join(e, "templates");
   try {
-    const entries = await fs.promises.readdir(templatesDir, {
-      withFileTypes: true
-    });
-    const files = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".json")).map((e) => ({
-      fileName: e.name.replace(/\.json$/i, ""),
-      fullPath: path.join(templatesDir, e.name)
+    return (await a.promises.readdir(i, {
+      withFileTypes: !0
+    })).filter((n) => n.isFile() && n.name.toLowerCase().endsWith(".json")).map((n) => ({
+      fileName: n.name.replace(/\.json$/i, ""),
+      fullPath: t.join(i, n.name)
     }));
-    return files;
   } catch {
     return [];
   }
 });
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
-});
-ipcMain.handle("read-json-file", async (_evt, fullPath) => {
+u.handle("list-backgrounds", async () => {
+  const e = f().selectedFolder;
+  if (!e)
+    return [];
+  const i = t.join(e, "backgrounds");
   try {
-    const settings = readAppSettings();
-    const rootFolder = settings.selectedFolder;
-    if (!rootFolder) return null;
-    const resolved = path.resolve(fullPath);
-    const resolvedRoot = path.resolve(rootFolder);
-    if (!resolved.startsWith(resolvedRoot)) return null;
-    if (!resolved.toLowerCase().endsWith(".json")) return null;
-    const raw = await fs.promises.readFile(resolved, "utf-8");
-    return JSON.parse(raw);
+    const r = await a.promises.readdir(i, {
+      withFileTypes: !0
+    }), o = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"], n = r.filter(
+      (l) => l.isFile() && o.includes(t.extname(l.name).toLowerCase())
+    ).map((l) => t.join(i, l.name));
+    return await Promise.all(
+      n.map(async (l) => {
+        try {
+          const g = await a.promises.readFile(l), m = t.extname(l).toLowerCase(), h = m === ".png" ? "image/png" : m === ".gif" ? "image/gif" : m === ".webp" ? "image/webp" : m === ".svg" ? "image/svg+xml" : "image/jpeg", j = g.toString("base64"), b = `data:${h};base64,${j}`;
+          return { fileName: t.basename(l), fullPath: l, url: b };
+        } catch {
+          return { fileName: t.basename(l), fullPath: l, url: "" };
+        }
+      })
+    );
+  } catch {
+    return [];
+  }
+});
+u.handle("get-background-data-url", async (s, e) => {
+  try {
+    const r = f().selectedFolder;
+    if (!r) return null;
+    const o = t.resolve(e), n = t.resolve(r);
+    if (!o.startsWith(n)) return null;
+    const c = t.extname(o).toLowerCase();
+    if (![".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(c)) return null;
+    const g = await a.promises.readFile(o), m = c === ".png" ? "image/png" : c === ".gif" ? "image/gif" : c === ".webp" ? "image/webp" : c === ".svg" ? "image/svg+xml" : "image/jpeg", h = g.toString("base64");
+    return `data:${m};base64,${h}`;
   } catch {
     return null;
   }
 });
-ipcMain.handle(
-  "write-json-file",
-  async (_evt, args) => {
+u.handle("read-root-settings", async () => {
+  try {
+    const e = f().selectedFolder;
+    if (!e) return {};
+    const i = t.join(e, "settings.json");
     try {
-      if (!args || !args.fullPath) return false;
-      const { fullPath, data } = args;
-      const settings = readAppSettings();
-      const rootFolder = settings.selectedFolder;
-      if (!rootFolder) return false;
-      const resolved = path.resolve(fullPath);
-      const resolvedRoot = path.resolve(rootFolder);
-      if (!resolved.startsWith(resolvedRoot)) return false;
-      if (!resolved.toLowerCase().endsWith(".json")) return false;
-      const content = JSON.stringify(data, null, 2) + "\n";
-      await fs.promises.writeFile(resolved, content, "utf-8");
-      return true;
+      const r = await a.promises.readFile(i, "utf-8");
+      return JSON.parse(r);
     } catch {
-      return false;
+      return {};
+    }
+  } catch {
+    return {};
+  }
+});
+u.handle(
+  "write-root-settings",
+  async (s, e) => {
+    try {
+      const r = f().selectedFolder;
+      if (!r) return !1;
+      const o = t.join(r, "settings.json");
+      let n = {};
+      try {
+        const g = await a.promises.readFile(o, "utf-8");
+        n = JSON.parse(g);
+      } catch {
+        n = {};
+      }
+      const c = { ...n, ...e ?? {} }, l = JSON.stringify(c, null, 2) + `
+`;
+      return await a.promises.writeFile(o, l, "utf-8"), !0;
+    } catch {
+      return !1;
     }
   }
 );
+p.on("window-all-closed", () => {
+  process.platform !== "darwin" && p.quit();
+});
+p.on("activate", () => {
+  y.getAllWindows().length === 0 && F();
+});
+u.handle("read-json-file", async (s, e) => {
+  try {
+    const r = f().selectedFolder;
+    if (!r) return null;
+    const o = t.resolve(e), n = t.resolve(r);
+    if (!o.startsWith(n) || !o.toLowerCase().endsWith(".json")) return null;
+    const c = await a.promises.readFile(o, "utf-8");
+    return JSON.parse(c);
+  } catch {
+    return null;
+  }
+});
+u.handle(
+  "write-json-file",
+  async (s, e) => {
+    try {
+      if (!e || !e.fullPath) return !1;
+      const { fullPath: i, data: r } = e, n = f().selectedFolder;
+      if (!n) return !1;
+      const c = t.resolve(i), l = t.resolve(n);
+      if (!c.startsWith(l) || !c.toLowerCase().endsWith(".json")) return !1;
+      const g = JSON.stringify(r, null, 2) + `
+`;
+      return await a.promises.writeFile(c, g, "utf-8"), !0;
+    } catch {
+      return !1;
+    }
+  }
+);
+u.handle("delete-json-file", async (s, e) => {
+  try {
+    const r = f().selectedFolder;
+    if (!r) return !1;
+    const o = t.resolve(e), n = t.resolve(r);
+    return !o.startsWith(n) || !o.toLowerCase().endsWith(".json") ? !1 : (await a.promises.unlink(o), !0);
+  } catch {
+    return !1;
+  }
+});
 //# sourceMappingURL=main.js.map

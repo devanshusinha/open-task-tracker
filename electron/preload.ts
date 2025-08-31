@@ -21,6 +21,22 @@
     > => {
       return ipcRenderer.invoke("list-templates");
     },
+    listBackgrounds: async (): Promise<
+      { fileName: string; fullPath: string; url: string }[]
+    > => {
+      return ipcRenderer.invoke("list-backgrounds");
+    },
+    getBackgroundDataUrl: async (fullPath: string): Promise<string | null> => {
+      return ipcRenderer.invoke("get-background-data-url", fullPath);
+    },
+    readRootSettings: async (): Promise<Record<string, unknown>> => {
+      return ipcRenderer.invoke("read-root-settings");
+    },
+    writeRootSettings: async (
+      partial: Record<string, unknown>
+    ): Promise<boolean> => {
+      return ipcRenderer.invoke("write-root-settings", partial);
+    },
     readJsonFile: async (fullPath: string): Promise<any | null> => {
       return ipcRenderer.invoke("read-json-file", fullPath);
     },
@@ -29,6 +45,9 @@
       data: unknown
     ): Promise<boolean> => {
       return ipcRenderer.invoke("write-json-file", { fullPath, data });
+    },
+    deleteJsonFile: async (fullPath: string): Promise<boolean> => {
+      return ipcRenderer.invoke("delete-json-file", fullPath);
     },
   });
 })();

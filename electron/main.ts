@@ -128,10 +128,12 @@ function writeAppSettings(settings: AppSettings) {
 async function ensureFolderStructure(rootFolder: string) {
   const templatesDir = path.join(rootFolder, "templates");
   const dailyTasksDir = path.join(rootFolder, "daily tasks");
+  const backgroundsDir = path.join(rootFolder, "backgrounds");
   const settingsFile = path.join(rootFolder, "settings.json");
 
   await fs.promises.mkdir(templatesDir, { recursive: true });
   await fs.promises.mkdir(dailyTasksDir, { recursive: true });
+  await fs.promises.mkdir(backgroundsDir, { recursive: true });
 
   try {
     await fs.promises.access(settingsFile, fs.constants.F_OK);
@@ -209,6 +211,128 @@ ipcMain.handle("list-templates", async () => {
   }
 });
 
+ipcMain.handle("list-backgrounds", async () => {
+  const settings = readAppSettings();
+  const rootFolder = settings.selectedFolder;
+  if (!rootFolder)
+    return [] as { fileName: string; fullPath: string; url: string }[];
+  const backgroundsDir = path.join(rootFolder, "backgrounds");
+  try {
+    const entries = await fs.promises.readdir(backgroundsDir, {
+      withFileTypes: true,
+    });
+    const exts = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
+    const filePaths = entries
+      .filter(
+        (e) => e.isFile() && exts.includes(path.extname(e.name).toLowerCase())
+      )
+      .map((e) => path.join(backgroundsDir, e.name));
+
+    const results = await Promise.all(
+      filePaths.map(async (fullPath) => {
+        try {
+          const buf = await fs.promises.readFile(fullPath);
+          const ext = path.extname(fullPath).toLowerCase();
+          const mime =
+            ext === ".png"
+              ? "image/png"
+              : ext === ".gif"
+                ? "image/gif"
+                : ext === ".webp"
+                  ? "image/webp"
+                  : ext === ".svg"
+                    ? "image/svg+xml"
+                    : "image/jpeg";
+          const b64 = buf.toString("base64");
+          const url = `data:${mime};base64,${b64}`;
+          return { fileName: path.basename(fullPath), fullPath, url };
+        } catch {
+          return { fileName: path.basename(fullPath), fullPath, url: "" };
+        }
+      })
+    );
+    return results;
+  } catch {
+    return [] as { fileName: string; fullPath: string; url: string }[];
+  }
+});
+
+ipcMain.handle("get-background-data-url", async (_evt, fullPath: string) => {
+  try {
+    const settings = readAppSettings();
+    const rootFolder = settings.selectedFolder;
+    if (!rootFolder) return null;
+    const resolved = path.resolve(fullPath);
+    const resolvedRoot = path.resolve(rootFolder);
+    if (!resolved.startsWith(resolvedRoot)) return null;
+    const ext = path.extname(resolved).toLowerCase();
+    const allowed = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
+    if (!allowed.includes(ext)) return null;
+    const buf = await fs.promises.readFile(resolved);
+    const mime =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".gif"
+          ? "image/gif"
+          : ext === ".webp"
+            ? "image/webp"
+            : ext === ".svg"
+              ? "image/svg+xml"
+              : "image/jpeg";
+    const b64 = buf.toString("base64");
+    return `data:${mime};base64,${b64}`;
+  } catch {
+    return null;
+  }
+});
+
+// Read settings.json stored inside the currently selected root folder
+ipcMain.handle("read-root-settings", async () => {
+  try {
+    const settings = readAppSettings();
+    const rootFolder = settings.selectedFolder;
+    if (!rootFolder) return {} as Record<string, unknown>;
+    const settingsFile = path.join(rootFolder, "settings.json");
+    try {
+      const raw = await fs.promises.readFile(settingsFile, "utf-8");
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {} as Record<string, unknown>;
+    }
+  } catch {
+    return {} as Record<string, unknown>;
+  }
+});
+
+// Merge and write settings.json inside the currently selected root folder
+ipcMain.handle(
+  "write-root-settings",
+  async (
+    _evt,
+    partial: Record<string, unknown> | undefined
+  ): Promise<boolean> => {
+    try {
+      const settings = readAppSettings();
+      const rootFolder = settings.selectedFolder;
+      if (!rootFolder) return false;
+      const settingsFile = path.join(rootFolder, "settings.json");
+      let current: Record<string, unknown> = {};
+      try {
+        const raw = await fs.promises.readFile(settingsFile, "utf-8");
+        current = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        current = {};
+      }
+      const next = { ...current, ...(partial ?? {}) };
+      const content = JSON.stringify(next, null, 2) + "\n";
+      await fs.promises.writeFile(settingsFile, content, "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+);
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
@@ -258,3 +382,19 @@ ipcMain.handle(
     }
   }
 );
+
+ipcMain.handle("delete-json-file", async (_evt, fullPath: string) => {
+  try {
+    const settings = readAppSettings();
+    const rootFolder = settings.selectedFolder;
+    if (!rootFolder) return false;
+    const resolved = path.resolve(fullPath);
+    const resolvedRoot = path.resolve(rootFolder);
+    if (!resolved.startsWith(resolvedRoot)) return false;
+    if (!resolved.toLowerCase().endsWith(".json")) return false;
+    await fs.promises.unlink(resolved);
+    return true;
+  } catch {
+    return false;
+  }
+});

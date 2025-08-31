@@ -111,6 +111,152 @@
   box-shadow: none;
 }
 
+/* Shimmer background behind inline editor text */
+.shimmer-edit {
+  position: relative;
+}
+.shimmer-edit::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.35) 35%,
+    rgba(255, 255, 255, 0.85) 45%,
+    rgba(255, 255, 255, 1) 50%,
+    rgba(255, 255, 255, 0.85) 55%,
+    rgba(255, 255, 255, 0.35) 65%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  background-position: -100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  opacity: 1;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.6));
+  animation: shimmer-move 1.8s ease-out infinite;
+}
+
+@keyframes shimmer-move {
+  0% {
+    background-position: -100% 0;
+    opacity: 0.45;
+  }
+  50% {
+    background-position: 0% 0;
+    opacity: 0.75;
+  }
+  100% {
+    background-position: 100% 0;
+    opacity: 0.45;
+  }
+}
+
+/* One-time rainbow shimmer overlay for preview text (right -> left) */
+.shimmer-once {
+  position: relative;
+  display: inline-block;
+  /* extend sweep beyond text width */
+  --shimmer-extra: 50vw;
+  z-index: 0;
+}
+.shimmer-once::before {
+  content: none !important;
+}
+.shimmer-once::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 0, 110, 0) 0%,
+    rgba(255, 0, 110, 0) 40%,
+    #ff006e 45%,
+    #fb5607 52%,
+    #ffbe0b 60%,
+    #3a86ff 68%,
+    #8338ec 76%,
+    rgba(131, 56, 236, 0) 82%,
+    rgba(255, 0, 110, 0) 100%
+  );
+  background-size: 400% 400%;
+  background-position: 150% 150%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: blur(4px);
+  will-change: background-position, filter;
+  animation: rainbow-once 3000ms ease-out forwards;
+}
+@keyframes rainbow-once {
+  0% {
+    background-position: 150% 150%;
+    opacity: 0.65;
+  }
+  45% {
+    opacity: 1;
+  }
+  100% {
+    background-position: -50% -50%;
+    opacity: 0;
+  }
+}
+
+/* Custom rainbow caret overlay */
+.rainbow-caret-hidden-caret {
+  /* Hide native caret when we render our custom one */
+  caret-color: transparent !important;
+}
+
+.rainbow-caret {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  /* Slightly thicker and longer than default */
+  width: 2px; /* thickness */
+  /* height will be set inline; provide a sensible default */
+  height: 1em;
+  /* Rainbow gradient */
+  background: linear-gradient(
+    to bottom,
+    #ff006e 0%,
+    #fb5607 16%,
+    #ffbe0b 33%,
+    #3a86ff 66%,
+    #8338ec 83%,
+    #ff006e 100%
+  );
+  /* Fully rounded ends for top and bottom */
+  border-radius: 9999px;
+  /* Blink animation similar to native caret */
+  animation: rainbow-caret-blink 1s steps(1, end) infinite;
+}
+
+@keyframes rainbow-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Draggable area for macOS hidden titlebar */
 .titlebar-drag {
   -webkit-app-region: drag;
