@@ -230,16 +230,13 @@
   width: 2px; /* thickness */
   /* height will be set inline; provide a sensible default */
   height: 1em;
+  /* Smooth glide as the caret updates */
+  transition:
+    top 60ms ease-out,
+    left 60ms ease-out,
+    height 60ms ease-out;
   /* Rainbow gradient */
-  background: linear-gradient(
-    to bottom,
-    #ff006e 0%,
-    #fb5607 16%,
-    #ffbe0b 33%,
-    #3a86ff 66%,
-    #8338ec 83%,
-    #ff006e 100%
-  );
+  background: linear-gradient(to bottom, #93c5fd 0%, #2563eb 100%);
   /* Fully rounded ends for top and bottom */
   border-radius: 9999px;
   /* Blink animation similar to native caret */

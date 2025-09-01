@@ -1,6 +1,11 @@
 (function() {
-  const { contextBridge: t, ipcRenderer: e } = require("electron");
-  t.exposeInMainWorld("api", {
+  const { contextBridge: o, ipcRenderer: e } = require("electron");
+  o.exposeInMainWorld("api", {
+    onOpenAbout: (n) => {
+      const t = "open-about", r = () => n();
+      return e.on(t, r), () => e.removeListener(t, r);
+    },
+    getAppInfo: async () => e.invoke("app-info"),
     selectFolder: async () => e.invoke("select-folder"),
     getSavedFolder: async () => e.invoke("get-saved-folder"),
     listDailyTasks: async () => e.invoke("list-daily-tasks"),
@@ -10,7 +15,7 @@
     readRootSettings: async () => e.invoke("read-root-settings"),
     writeRootSettings: async (n) => e.invoke("write-root-settings", n),
     readJsonFile: async (n) => e.invoke("read-json-file", n),
-    writeJsonFile: async (n, r) => e.invoke("write-json-file", { fullPath: n, data: r }),
+    writeJsonFile: async (n, t) => e.invoke("write-json-file", { fullPath: n, data: t }),
     deleteJsonFile: async (n) => e.invoke("delete-json-file", n)
   });
 })();

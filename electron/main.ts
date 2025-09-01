@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -93,7 +93,107 @@ function createMainWindow() {
   });
 }
 
-app.whenReady().then(createMainWindow);
+app.whenReady().then(() => {
+  createMainWindow();
+
+  // macOS custom application menu
+  if (process.platform === "darwin") {
+    const appName = "Open Task Tracker";
+    const template: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: appName,
+        submenu: [
+          {
+            label: `About ${appName}`,
+            click: () => {
+              try {
+                if (mainWindow) {
+                  mainWindow.webContents.send("open-about");
+                }
+              } catch {}
+            },
+          },
+          { type: "separator" },
+          { role: "services", submenu: [] },
+          { type: "separator" },
+          { role: "hide", label: `Hide ${appName}` },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit", label: `Quit ${appName}` },
+        ],
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "pasteAndMatchStyle" },
+          { role: "delete" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "View",
+        submenu: [
+          { role: "reload" },
+          { role: "toggleDevTools" },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
+      {
+        label: "Window",
+        submenu: [
+          { role: "minimize" },
+          { role: "zoom" },
+          { type: "separator" },
+          { role: "front" },
+          { role: "window" },
+        ],
+      },
+      {
+        role: "help",
+        submenu: [
+          {
+            label: "Learn More",
+            click: () => {
+              // no-op placeholder
+            },
+          },
+        ],
+      },
+    ];
+    const menu = Menu.buildFromTemplate(template);
+    Menu.setApplicationMenu(menu);
+  }
+});
+
+// Configure native About panel (macOS) and provide app metadata
+app.setAboutPanelOptions?.({
+  applicationName: "Open Task Tracker",
+  applicationVersion: "0.0.1",
+  version: "0.0.1",
+  authors: ["Devanshu Sinha"],
+  copyright: `© ${new Date().getFullYear()} Devanshu Sinha`,
+  website: "",
+});
+
+ipcMain.handle("app-info", async () => {
+  return {
+    name: "Open Task Tracker",
+    version: "0.0.1",
+    author: "Devanshu Sinha",
+  } as const;
+});
 
 // Simple app-level settings stored under userData
 type AppSettings = {

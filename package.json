@@ -1,7 +1,7 @@
 {
   "name": "open-task-tracker",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.0.1",
+  "description": "Open Task Tracker",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
+  "author": "Devanshu Sinha",
   "license": "ISC",
   "type": "module",
   "build": {

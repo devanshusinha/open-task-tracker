@@ -5,6 +5,19 @@
   const { contextBridge, ipcRenderer } = require("electron");
 
   contextBridge.exposeInMainWorld("api", {
+    onOpenAbout: (handler: () => void) => {
+      const channel = "open-about";
+      const wrapped = () => handler();
+      ipcRenderer.on(channel, wrapped);
+      return () => ipcRenderer.removeListener(channel, wrapped);
+    },
+    getAppInfo: async (): Promise<{
+      name: string;
+      version: string;
+      author: string;
+    }> => {
+      return ipcRenderer.invoke("app-info");
+    },
     selectFolder: async (): Promise<{ folderPath: string } | null> => {
       return ipcRenderer.invoke("select-folder");
     },

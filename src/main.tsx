@@ -18,8 +18,58 @@ import {
   History,
   FilePlus,
   Image as ImageIcon,
+  Info,
 } from "lucide-react";
 import { TrashIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+const AboutContent: React.FC = () => {
+  const [info, setInfo] = useState<{
+    name: string;
+    version: string;
+    author: string;
+  } | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await (window as any)?.api?.getAppInfo?.();
+        if (v) setInfo(v);
+      } catch {}
+    })();
+  }, []);
+  return (
+    <div className="relative">
+      <div className="pointer-events-none absolute -top-28 -right-20 h-64 w-64 rounded-full bg-gradient-to-tr from-blue-500/30 via-cyan-400/25 to-emerald-400/30 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 -left-24 h-56 w-56 rounded-full bg-gradient-to-br from-emerald-400/30 via-cyan-400/25 to-blue-500/30 blur-3xl" />
+
+      <div className="relative z-10 flex items-start gap-4">
+        <img
+          src="/build/icon.png"
+          alt="Open Task Tracker icon"
+          className="h-12 w-12 rounded-xl border border-white/10 shadow"
+          draggable={false}
+        />
+        <div>
+          <div className="text-lg font-semibold tracking-tight">
+            {info?.name ?? "Open Task Tracker"}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Version {info?.version ?? "0.0.1"}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            By {info?.author ?? "Devanshu Sinha"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 text-sm leading-relaxed text-foreground/90">
+        A fully open source task tracker
+      </div>
+
+      <div className="mt-4 text-[11px] text-muted-foreground">
+        © {new Date().getFullYear()} Devanshu Sinha. All rights reserved.
+      </div>
+    </div>
+  );
+};
 
 const RecycleIcon: React.FC<{ className?: string; title?: string }> = ({
   className,
@@ -117,11 +167,23 @@ const GlobalRainbowCaret: React.FC<{ active?: boolean }> = ({
         return;
       }
       const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+      if (!selection || selection.rangeCount === 0) {
         if (caret.visible) setCaret((c) => ({ ...c, visible: false }));
         return;
       }
-      const range = selection.getRangeAt(0);
+      let range = selection.getRangeAt(0);
+      if (!selection.isCollapsed) {
+        try {
+          const focusNode = selection.focusNode as Node | null;
+          const focusOffset = selection.focusOffset ?? 0;
+          if (focusNode) {
+            const caretRange = document.createRange();
+            caretRange.setStart(focusNode, Math.max(0, focusOffset));
+            caretRange.setEnd(focusNode, Math.max(0, focusOffset));
+            range = caretRange;
+          }
+        } catch {}
+      }
       const anchorNode = selection.anchorNode as Node | null;
       let nodeElement: Element | null = null;
       if (anchorNode) {
@@ -138,15 +200,28 @@ const GlobalRainbowCaret: React.FC<{ active?: boolean }> = ({
         return;
       }
       const rects = range.getClientRects();
-      const rect = rects.length > 0 ? rects[0] : range.getBoundingClientRect();
+      let rect = rects.length > 0 ? rects[0] : range.getBoundingClientRect();
+      let usedFallback = false;
       if (!rect) {
         if (caret.visible) setCaret((c) => ({ ...c, visible: false }));
         return;
       }
+      // Fallback for empty editors where range rect can be zero-sized
+      if ((rect.width === 0 && rect.height === 0) || !isFinite(rect.top)) {
+        const hostRect = host.getBoundingClientRect();
+        rect = hostRect;
+        usedFallback = true;
+      }
       const computed = window.getComputedStyle(host);
-      const lineHeight = parseFloat(computed.lineHeight || "0");
-      const base =
-        rect.height || lineHeight || host.getBoundingClientRect().height || 16;
+      let lineHeight = parseFloat(computed.lineHeight || "0");
+      if (!isFinite(lineHeight) || lineHeight <= 0) {
+        const fontSize = parseFloat(computed.fontSize || "16");
+        lineHeight = isFinite(fontSize) && fontSize > 0 ? fontSize * 1.2 : 16;
+      }
+      let base = rect.height || lineHeight || 16;
+      if (usedFallback) {
+        base = lineHeight || 16;
+      }
       const displayHeight = Math.max(base + 2, 12);
       setCaret({
         visible: true,
@@ -224,6 +299,7 @@ function App() {
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(true);
   const [isCreateTaskListOpen, setIsCreateTaskListOpen] = useState(false);
   const [isBackgroundsOpen, setIsBackgroundsOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [backgroundImages, setBackgroundImages] = useState<
     { fileName: string; fullPath: string; url: string }[]
   >([]);
@@ -253,6 +329,9 @@ function App() {
   const [dailyProgress, setDailyProgress] = useState<
     { date: string; total: number; completed: number; percent: number }[]
   >([]);
+  const [hoveredHeatmapDate, setHoveredHeatmapDate] = useState<string | null>(
+    null
+  );
   const [selectedKind, setSelectedKind] = useState<"task" | "template" | null>(
     null
   );
@@ -275,6 +354,58 @@ function App() {
     string | null
   >(null);
 
+  // Countdown Timer state
+  const timerOptions = [5, 10, 15, 20, 25, 30, 45, 60] as const;
+  type TimerMinutes = (typeof timerOptions)[number];
+  const [timerMinutes, setTimerMinutes] = useState<TimerMinutes>(25);
+  const [timerRemainingSec, setTimerRemainingSec] = useState<number>(
+    timerMinutes * 60
+  );
+  const [timerRunning, setTimerRunning] = useState<boolean>(false);
+
+  // Keep remaining seconds in sync with selected minutes when not running
+  useEffect(() => {
+    if (!timerRunning) {
+      setTimerRemainingSec(timerMinutes * 60);
+    }
+  }, [timerMinutes, timerRunning]);
+
+  // Tick the timer every second while running
+  useEffect(() => {
+    if (!timerRunning) return;
+    if (timerRemainingSec <= 0) {
+      setTimerRunning(false);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setTimerRemainingSec((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [timerRunning, timerRemainingSec]);
+
+  const formatTimer = (totalSeconds: number) => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, "0")}:${seconds
+      .toString()
+      .padStart(2, "0")}`;
+  };
+
+  // Circular timer ring derived values
+  const totalTimerSeconds = timerMinutes * 60;
+  const ringSizePx = 160; // matches w-40 h-40 (10rem)
+  const ringStrokeWidth = 2;
+  const ringCenter = ringSizePx / 2;
+  const ringRadius = ringCenter - ringStrokeWidth / 2;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const timerFraction =
+    totalTimerSeconds > 0
+      ? Math.max(0, Math.min(1, timerRemainingSec / totalTimerSeconds))
+      : 0;
+  const ringDashArray = `${timerFraction * ringCircumference} ${ringCircumference}`;
+  const ringHue = Math.round(120 * timerFraction); // 120 (green) -> 0 (red)
+  const ringStrokeColor = `hsl(${ringHue}, 90%, 55%)`;
+
   type EditingTarget =
     | {
         kind: "task";
@@ -296,6 +427,46 @@ function App() {
       };
   const [editing, setEditing] = useState<EditingTarget | null>(null);
   const [editValue, setEditValue] = useState("");
+  useEffect(() => {
+    if (!editing) return;
+    const key =
+      editing.kind === "task"
+        ? `${editing.groupId}:${editing.taskId}:${editing.field}`
+        : editing.kind === "subtask"
+          ? `${editing.groupId}:${editing.taskId}:${(editing as any).subTaskId}:${(editing as any).field}`
+          : `${editing.groupId}:${editing.field}`;
+    const focusLater = () => {
+      const el = document.querySelector(
+        `[data-editor-key="${key}"]`
+      ) as HTMLElement | null;
+      if (el) {
+        // Inject a zero-width space for empty editors so caret becomes visible
+        if (!el.textContent || el.textContent.length === 0) {
+          el.textContent = "\u200B";
+        }
+        el.focus();
+        try {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          if (el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE) {
+            const text = el.firstChild as Text;
+            const len = text.data?.length ?? 0;
+            range.setStart(text, len);
+            range.setEnd(text, len);
+          } else {
+            range.selectNodeContents(el);
+            range.collapse(false);
+          }
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        } catch {}
+      }
+    };
+    // Run after paint to ensure the editor is mounted
+    requestAnimationFrame(() => {
+      requestAnimationFrame(focusLater);
+    });
+  }, [editing]);
   const [shimmerOnceKeys, setShimmerOnceKeys] = useState<
     Record<string, boolean>
   >({});
@@ -1042,6 +1213,10 @@ function App() {
     } catch {}
     const activeEl = document.activeElement as HTMLElement | null;
     if (activeEl && activeEl.isContentEditable) {
+      // Clean up zero-width space if present and content is otherwise empty
+      if ((activeEl.textContent || "").trim() === "\u200B") {
+        activeEl.textContent = "";
+      }
       activeEl.blur();
     }
   };
@@ -1050,7 +1225,14 @@ function App() {
     if (!editing || !selectedDoc || !selectedPath) return;
     const nowIso = new Date().toISOString();
     let next: TaskDocument = selectedDoc;
-    const newValue = overrideValue !== undefined ? overrideValue : editValue;
+    const rawValue = overrideValue !== undefined ? overrideValue : editValue;
+    let newValue = rawValue;
+    if (
+      (editing as any).field === "description" ||
+      (editing as any).field === "notes"
+    ) {
+      newValue = rawValue.replace(/\u200B/g, "").trim();
+    }
     if (editing.kind === "task") {
       next = {
         ...selectedDoc,
@@ -1299,6 +1481,98 @@ function App() {
     }
     return { total, completed };
   };
+
+  function SmallCircularProgress({ percent }: { percent: number }) {
+    const size = 36; // px (larger to avoid text overlap)
+    const strokeWidth = 4; // px
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    const offset = circumference * (1 - clamped / 100);
+    const center = size / 2;
+    if (clamped === 100) {
+      return (
+        <div className="relative" style={{ width: size, height: size }}>
+          <div
+            className="absolute rounded-full bg-emerald-500 border border-emerald-300/40 transition-all"
+            style={{
+              top: strokeWidth / 2,
+              right: strokeWidth / 2,
+              bottom: strokeWidth / 2,
+              left: strokeWidth / 2,
+            }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg
+              width={Math.round(size * 0.55)}
+              height={Math.round(size * 0.55)}
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M5 13.5 10 18.5 19 7.5"
+                fill="none"
+                stroke="white"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          className="-rotate-90"
+        >
+          <defs>
+            <linearGradient
+              id="progressGradient"
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="0%"
+            >
+              <stop offset="0%" stopColor="#ef4444" />
+              <stop offset="50%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#22c55e" />
+            </linearGradient>
+          </defs>
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            stroke="rgba(255,255,255,0.15)"
+            strokeWidth={strokeWidth}
+            fill="none"
+          />
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            stroke="url(#progressGradient)"
+            strokeWidth={strokeWidth}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeDashoffset={offset}
+            style={{
+              transition:
+                "stroke-dashoffset 500ms cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center text-[9px] font-medium tabular-nums">
+          {clamped}%
+        </div>
+      </div>
+    );
+  }
 
   const getHeatCellClass = (percent: number, hasData: boolean) => {
     if (!hasData || percent === 0) {
@@ -1669,6 +1943,14 @@ function App() {
     loadPersistedBackground();
   }, [selectedFolder]);
 
+  useEffect(() => {
+    // Hook app menu About
+    const off = (window as any)?.api?.onOpenAbout?.(() => setIsAboutOpen(true));
+    return () => {
+      if (typeof off === "function") off();
+    };
+  }, []);
+
   return (
     <div className="h-screen w-screen bg-background text-foreground">
       {selectedBackgroundUrl && (
@@ -1893,6 +2175,16 @@ function App() {
                           <span className="relative z-10">Background</span>
                         </button>
                       </div>
+                    </div>
+                    <div className="mt-4">
+                      <button
+                        onClick={() => setIsAboutOpen(true)}
+                        className="w-full inline-flex items-center justify-center gap-2 h-9 rounded-md border border-sidebar-border text-sm px-3 bg-gradient-to-r from-emerald-500/15 via-cyan-500/15 to-blue-500/15 hover:from-emerald-500/25 hover:via-cyan-500/25 hover:to-blue-500/25 transition-colors relative overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.06)_inset] after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]"
+                        title="About Open Task Tracker"
+                      >
+                        <Info className="h-3.5 w-3.5 relative z-10" />
+                        <span className="relative z-10">About</span>
+                      </button>
                     </div>
                   </>
                 )}
@@ -2430,6 +2722,43 @@ function App() {
               document.body
             )}
 
+            {createPortal(
+              <AnimatePresence>
+                {isAboutOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    <motion.div
+                      className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                      onClick={() => setIsAboutOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.98, y: 4 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      className="relative z-[101] w-[520px] max-w-[92vw] flex flex-col rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-950/60 via-zinc-900/50 to-black/40 p-5 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] ring-1 ring-white/5 overflow-hidden before:content-[''] before:pointer-events-none before:absolute before:inset-[-1px] before:rounded-2xl before:bg-[radial-gradient(65%_80%_at_85%_5%,_rgba(59,130,246,0.18)_0%,_transparent_60%),radial-gradient(60%_70%_at_10%_0%,_rgba(16,185,129,0.16)_0%,_transparent_55%)] before:opacity-[0.18] before:blur-xl after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-2xl after:bg-[image:radial-gradient(#ffffff_0.5px,_transparent_0)] after:bg-[size:4px_4px] after:bg-repeat after:bg-right after:opacity-[0.03] after:[mask-image:radial-gradient(80%_60%_at_50%_0%,_black,_transparent)]"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold">About</h3>
+                        <button
+                          className="p-1 rounded hover:bg-white/5"
+                          onClick={() => setIsAboutOpen(false)}
+                          aria-label="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <AboutContent />
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>,
+              document.body
+            )}
+
             {/* Two equal panels taking remaining width */}
             <div className="flex-1 h-full  overflow-hidden p-3">
               <div className="relative w-full h-full rounded-xl border border-border bg-secondary/10 backdrop-blur-md overflow-hidden">
@@ -2459,989 +2788,937 @@ function App() {
                       )}
                     </div>
                     <div className="p-4 text-sm space-y-3 overflow-auto h-[calc(100%-48px)]">
-                      {!selectedDoc ? (
-                        <div className="text-muted-foreground">
-                          Select a task or template from the sidebar
-                        </div>
-                      ) : (
-                        selectedDoc.taskGroups?.map((group) => (
-                          <div
-                            key={group.id}
-                            className="rounded-md border border-white/10 bg-white/[0.03] backdrop-blur-md"
+                      <AnimatePresence mode="wait">
+                        {!selectedDoc ? (
+                          <motion.div
+                            key="no-doc"
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            transition={{ duration: 0.2 }}
+                            className="text-muted-foreground"
                           >
-                            <div className="flex items-center gap-2 px-3 h-9">
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  className="p-1 rounded hover:bg-white/5"
-                                  onClick={() => toggleGroup(group.id)}
-                                  aria-expanded={!!openGroupIds[group.id]}
-                                  aria-label={
-                                    openGroupIds[group.id]
-                                      ? "Collapse group"
-                                      : "Expand group"
-                                  }
-                                  title={
-                                    openGroupIds[group.id]
-                                      ? "Collapse group"
-                                      : "Expand group"
-                                  }
-                                >
-                                  <ChevronDown
-                                    className={`h-4 w-4 transition-transform ${openGroupIds[group.id] ? "-rotate-180" : "rotate-0"}`}
-                                  />
-                                </button>
-                                <span className="font-medium whitespace-pre-wrap break-words">
-                                  {editing &&
-                                  editing.kind === "group" &&
-                                  editing.groupId === group.id &&
-                                  editing.field === "name" ? (
-                                    <div
-                                      role="textbox"
-                                      contentEditable
-                                      suppressContentEditableWarning
-                                      className="w-full bg-transparent text-sm text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
-                                      data-text={editValue || group.name || ""}
-                                      onInput={(e) =>
-                                        setEditValue(
-                                          (e.currentTarget as HTMLDivElement)
-                                            .innerText
-                                        )
-                                      }
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter" && !e.shiftKey) {
-                                          e.preventDefault();
-                                          saveEdit(
+                            Select a task or template from the sidebar
+                          </motion.div>
+                        ) : (
+                          (selectedDoc.taskGroups || []).map((group) => (
+                            <motion.div
+                              key={group.id}
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -8 }}
+                              transition={{ duration: 0.2 }}
+                              className="rounded-md border border-white/10 bg-white/[0.03] backdrop-blur-md"
+                            >
+                              <div className="flex items-center gap-2 px-3 h-9">
+                                <div className="inline-flex items-center gap-2">
+                                  <button
+                                    className="p-1 rounded hover:bg-white/5"
+                                    onClick={() => toggleGroup(group.id)}
+                                    aria-expanded={!!openGroupIds[group.id]}
+                                    aria-label={
+                                      openGroupIds[group.id]
+                                        ? "Collapse group"
+                                        : "Expand group"
+                                    }
+                                    title={
+                                      openGroupIds[group.id]
+                                        ? "Collapse group"
+                                        : "Expand group"
+                                    }
+                                  >
+                                    <ChevronDown
+                                      className={`h-4 w-4 transition-transform ${openGroupIds[group.id] ? "-rotate-180" : "rotate-0"}`}
+                                    />
+                                  </button>
+                                  <span className="font-medium whitespace-pre-wrap break-words">
+                                    {editing &&
+                                    editing.kind === "group" &&
+                                    editing.groupId === group.id &&
+                                    editing.field === "name" ? (
+                                      <div
+                                        role="textbox"
+                                        contentEditable
+                                        suppressContentEditableWarning
+                                        className="w-full bg-transparent text-sm text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
+                                        data-editor-key={`${group.id}:name`}
+                                        data-text={
+                                          editValue || group.name || ""
+                                        }
+                                        onInput={(e) =>
+                                          setEditValue(
                                             (e.currentTarget as HTMLDivElement)
                                               .innerText
-                                          );
+                                          )
                                         }
-                                        if (e.key === "Escape") {
-                                          e.preventDefault();
-                                          cancelEdit();
-                                        }
-                                      }}
-                                    >
-                                      {group.name}
-                                    </div>
-                                  ) : (
-                                    <span
-                                      className={
-                                        shimmerOnceKeys[`${group.id}:name`]
-                                          ? "shimmer-once"
-                                          : undefined
-                                      }
-                                      data-text={group.name}
-                                      onDoubleClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        startEdit(
-                                          {
-                                            kind: "group",
-                                            groupId: group.id,
-                                            field: "name",
-                                          },
-                                          group.name || ""
-                                        );
-                                      }}
-                                      onAnimationEnd={() =>
-                                        setShimmerOnceKeys((prev) => {
-                                          const next = { ...prev };
-                                          delete next[`${group.id}:name`];
-                                          return next;
-                                        })
-                                      }
-                                    >
-                                      {group.name}
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                              <div className="ml-auto inline-flex items-center gap-1">
-                                <button
-                                  className="p-1 rounded hover:bg-white/5"
-                                  title="Add task"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    addTask(group.id);
-                                  }}
-                                >
-                                  <Plus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                </button>
-                                <button
-                                  className="p-1 rounded hover:bg-white/5"
-                                  title="Delete group"
-                                  aria-label="Delete group"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    deleteGroup(group.id);
-                                  }}
-                                >
-                                  <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                </button>
-                              </div>
-                            </div>
-                            {openGroupIds[group.id] && (
-                              <div className="px-3 pb-3 space-y-2">
-                                {group.tasks?.length ? (
-                                  group.tasks.map((task) => (
-                                    <div
-                                      key={task.id}
-                                      className="relative overflow-hidden rounded border border-sidebar-border/40"
-                                    >
-                                      <div className="flex items-start gap-2 px-3 py-2">
-                                        <div className="self-start">
-                                          <Checkbox
-                                            id={`task-${task.id}`}
-                                            checked={!!task.isComplete}
-                                            onCheckedChange={(v) =>
-                                              updateTaskCompletion(
-                                                group.id,
-                                                task.id,
-                                                v
-                                              )
-                                            }
-                                          >
-                                            <Checkbox.Indicator />
-                                          </Checkbox>
-                                        </div>
-                                        <div className="min-w-0 flex-1">
-                                          <div
-                                            className="whitespace-pre-wrap break-words text-foreground"
-                                            onDoubleClick={() =>
-                                              startEdit(
-                                                {
-                                                  kind: "task",
-                                                  groupId: group.id,
-                                                  taskId: task.id,
-                                                  field: "name",
-                                                },
-                                                task.name
-                                              )
-                                            }
-                                          >
-                                            {editing &&
-                                            editing.kind === "task" &&
-                                            editing.groupId === group.id &&
-                                            editing.taskId === task.id &&
-                                            editing.field === "name" ? (
-                                              <div
-                                                role="textbox"
-                                                contentEditable
-                                                suppressContentEditableWarning
-                                                className="w-full bg-transparent text-sm text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
-                                                data-text={
-                                                  editValue || task.name
-                                                }
-                                                onInput={(e) =>
-                                                  setEditValue(
-                                                    (
-                                                      e.currentTarget as HTMLDivElement
-                                                    ).innerText
-                                                  )
-                                                }
-                                                onKeyDown={(e) => {
-                                                  if (
-                                                    e.key === "Enter" &&
-                                                    !e.shiftKey
-                                                  ) {
-                                                    e.preventDefault();
-                                                    saveEdit(
-                                                      (
-                                                        e.currentTarget as HTMLDivElement
-                                                      ).innerText
-                                                    );
-                                                  }
-                                                  if (e.key === "Escape") {
-                                                    e.preventDefault();
-                                                    cancelEdit();
-                                                  }
-                                                }}
-                                              >
-                                                {task.name}
-                                              </div>
-                                            ) : (
-                                              <span
-                                                className={
-                                                  shimmerOnceKeys[
-                                                    `${group.id}:${task.id}:name`
-                                                  ]
-                                                    ? "shimmer-once"
-                                                    : undefined
-                                                }
-                                                data-text={task.name}
-                                                onAnimationEnd={() =>
-                                                  setShimmerOnceKeys((prev) => {
-                                                    const next = { ...prev };
-                                                    delete next[
-                                                      `${group.id}:${task.id}:name`
-                                                    ];
-                                                    return next;
-                                                  })
-                                                }
-                                              >
-                                                {task.name}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div
-                                            className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
-                                            onDoubleClick={() =>
-                                              startEdit(
-                                                {
-                                                  kind: "task",
-                                                  groupId: group.id,
-                                                  taskId: task.id,
-                                                  field: "description",
-                                                },
-                                                task.description || ""
-                                              )
-                                            }
-                                          >
-                                            {editing &&
-                                            editing.kind === "task" &&
-                                            editing.groupId === group.id &&
-                                            editing.taskId === task.id &&
-                                            editing.field === "description" ? (
-                                              <div
-                                                role="textbox"
-                                                contentEditable
-                                                suppressContentEditableWarning
-                                                className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
-                                                data-text={
-                                                  editValue ||
-                                                  task.description ||
-                                                  ""
-                                                }
-                                                onInput={(e) =>
-                                                  setEditValue(
-                                                    (
-                                                      e.currentTarget as HTMLDivElement
-                                                    ).innerText
-                                                  )
-                                                }
-                                                onKeyDown={(e) => {
-                                                  if (
-                                                    e.key === "Enter" &&
-                                                    !e.shiftKey
-                                                  ) {
-                                                    e.preventDefault();
-                                                    saveEdit(
-                                                      (
-                                                        e.currentTarget as HTMLDivElement
-                                                      ).innerText
-                                                    );
-                                                  }
-                                                  if (e.key === "Escape") {
-                                                    e.preventDefault();
-                                                    cancelEdit();
-                                                  }
-                                                }}
-                                              >
-                                                {task.description || ""}
-                                              </div>
-                                            ) : task.description ? (
-                                              <span
-                                                className={
-                                                  shimmerOnceKeys[
-                                                    `${group.id}:${task.id}:description`
-                                                  ]
-                                                    ? "shimmer-once"
-                                                    : undefined
-                                                }
-                                                data-text={task.description}
-                                                onAnimationEnd={() =>
-                                                  setShimmerOnceKeys((prev) => {
-                                                    const next = { ...prev };
-                                                    delete next[
-                                                      `${group.id}:${task.id}:description`
-                                                    ];
-                                                    return next;
-                                                  })
-                                                }
-                                              >
-                                                {task.description}
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                          {task.notes ? (
-                                            <div className="mt-1">
-                                              <button
-                                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                                                onClick={() =>
-                                                  toggleTaskNotes(task.id)
-                                                }
-                                                aria-expanded={
-                                                  !!openTaskNotesIds[task.id]
-                                                }
-                                                title="Toggle notes"
-                                              >
-                                                Notes
-                                                <ChevronDown
-                                                  className={`h-3 w-3 transition-transform ${openTaskNotesIds[task.id] ? "-rotate-180" : "rotate-0"}`}
-                                                />
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <div className="mt-1">
-                                              <button
-                                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                                                onClick={() =>
-                                                  startEdit(
-                                                    {
-                                                      kind: "task",
-                                                      groupId: group.id,
-                                                      taskId: task.id,
-                                                      field: "notes",
-                                                    },
-                                                    task.notes || ""
-                                                  )
-                                                }
-                                                title="Add notes"
-                                              >
-                                                Add notes
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
-                                        <div className="ml-auto inline-flex items-center gap-2">
-                                          <button
-                                            className="p-0.5 rounded hover:bg-white/5"
-                                            title={
-                                              task.recycle
-                                                ? "Recycling on"
-                                                : "Recycling off"
-                                            }
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              toggleTaskRecycle(
-                                                group.id,
-                                                task.id
-                                              );
-                                            }}
-                                          >
-                                            <RecycleIcon
-                                              className={`h-3.5 w-3.5 ${task.recycle ? "text-green-400" : "text-muted-foreground"} hover:text-foreground`}
-                                            />
-                                          </button>
-                                          <button
-                                            className="p-0.5 rounded hover:bg-white/5"
-                                            title="Add subtask"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              addSubtask(group.id, task.id);
-                                            }}
-                                          >
-                                            <Plus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                          </button>
-                                          <button
-                                            className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
-                                            onClick={() =>
-                                              toggleTaskSubtasks(task.id)
-                                            }
-                                            aria-expanded={
-                                              !!openTaskIds[task.id]
-                                            }
-                                            title="Toggle subtasks"
-                                          >
-                                            <ChevronDown
-                                              className={`h-4 w-4 transition-transform ${openTaskIds[task.id] ? "-rotate-180" : "rotate-0"}`}
-                                            />
-                                          </button>
-                                          <button
-                                            className="p-0.5 rounded hover:bg-white/5"
-                                            title="Delete task"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              deleteTask(group.id, task.id);
-                                            }}
-                                          >
-                                            <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                          </button>
-                                        </div>
+                                        onKeyDown={(e) => {
+                                          if (
+                                            e.key === "Enter" &&
+                                            !e.shiftKey
+                                          ) {
+                                            e.preventDefault();
+                                            saveEdit(
+                                              (
+                                                e.currentTarget as HTMLDivElement
+                                              ).innerText
+                                            );
+                                          }
+                                          if (e.key === "Escape") {
+                                            e.preventDefault();
+                                            cancelEdit();
+                                          }
+                                        }}
+                                      >
+                                        {group.name}
                                       </div>
-                                      {openTaskNotesIds[task.id] &&
-                                        ((task.notes &&
-                                          task.notes.trim() !== "") ||
-                                          (editing &&
-                                            editing.kind === "task" &&
-                                            editing.groupId === group.id &&
-                                            editing.taskId === task.id &&
-                                            editing.field === "notes")) && (
-                                          <div
-                                            className="px-3 pb-2 pl-10"
-                                            ref={(el) => {
-                                              taskNotesRefs.current[task.id] =
-                                                el;
-                                            }}
-                                          >
-                                            <div className="relative overflow-hidden rounded-md border border-sidebar-border/50 p-3 text-xs bg-gradient-to-br from-green-950/40 via-green-900/10 to-cyan-900/10 after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]">
-                                              <div className="flex items-center justify-between mb-1">
-                                                <div className="font-medium text-[11px] uppercase tracking-wide text-muted-foreground">
-                                                  Notes
-                                                </div>
-                                                <button
-                                                  className="p-0.5  rounded hover:bg-white/5 -translate-y-1 translate-x-1"
-                                                  title="Delete notes"
-                                                  onClick={async (e) => {
-                                                    e.preventDefault();
-                                                    // clear notes and persist
-                                                    const nowIso =
-                                                      new Date().toISOString();
-                                                    setSelectedDoc((prev) => {
-                                                      if (!prev) return prev;
-                                                      const next: TaskDocument =
-                                                        {
-                                                          ...prev,
-                                                          updatedAt: nowIso,
-                                                          taskGroups:
-                                                            prev.taskGroups.map(
-                                                              (g) =>
-                                                                g.id !==
-                                                                group.id
-                                                                  ? g
-                                                                  : {
-                                                                      ...g,
-                                                                      tasks:
-                                                                        g.tasks.map(
-                                                                          (
-                                                                            t
-                                                                          ) =>
-                                                                            t.id !==
-                                                                            task.id
-                                                                              ? t
-                                                                              : {
-                                                                                  ...t,
-                                                                                  notes:
-                                                                                    null,
-                                                                                  updatedAt:
-                                                                                    nowIso,
-                                                                                }
-                                                                        ),
-                                                                    }
-                                                            ),
-                                                        };
-                                                      // optimistic UI; persist async
-                                                      (async () => {
-                                                        try {
-                                                          if (selectedPath) {
-                                                            await window.api?.writeJsonFile?.(
-                                                              selectedPath,
-                                                              next
-                                                            );
-                                                          }
-                                                        } catch (err) {
-                                                          console.error(
-                                                            "Failed to write JSON:",
-                                                            err
-                                                          );
-                                                        }
-                                                      })();
-                                                      setOpenTaskNotesIds(
-                                                        (prev) => ({
-                                                          ...prev,
-                                                          [task.id]: false,
-                                                        })
-                                                      );
-                                                      return next;
-                                                    });
-                                                  }}
-                                                >
-                                                  <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                                </button>
-                                              </div>
-                                              <div
-                                                className="whitespace-pre-wrap break-words text-foreground/90"
-                                                onDoubleClick={() =>
-                                                  startEdit(
-                                                    {
-                                                      kind: "task",
-                                                      groupId: group.id,
-                                                      taskId: task.id,
-                                                      field: "notes",
-                                                    },
-                                                    task.notes || ""
-                                                  )
-                                                }
-                                              >
-                                                {editing &&
-                                                editing.kind === "task" &&
-                                                editing.groupId === group.id &&
-                                                editing.taskId === task.id &&
-                                                editing.field === "notes" ? (
-                                                  <div
-                                                    role="textbox"
-                                                    contentEditable
-                                                    suppressContentEditableWarning
-                                                    className="w-full bg-transparent text-xs text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
-                                                    data-text={
-                                                      editValue ||
-                                                      task.notes ||
-                                                      ""
-                                                    }
-                                                    onInput={(e) =>
-                                                      setEditValue(
+                                    ) : (
+                                      <span
+                                        className={
+                                          shimmerOnceKeys[`${group.id}:name`]
+                                            ? "shimmer-once"
+                                            : undefined
+                                        }
+                                        data-text={group.name}
+                                        onDoubleClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          startEdit(
+                                            {
+                                              kind: "group",
+                                              groupId: group.id,
+                                              field: "name",
+                                            },
+                                            group.name || ""
+                                          );
+                                        }}
+                                        onAnimationEnd={() =>
+                                          setShimmerOnceKeys((prev) => {
+                                            const next = { ...prev };
+                                            delete next[`${group.id}:name`];
+                                            return next;
+                                          })
+                                        }
+                                      >
+                                        {group.name}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="ml-auto inline-flex items-center gap-1">
+                                  <button
+                                    className="p-1 rounded hover:bg-white/5"
+                                    title="Add task"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      addTask(group.id);
+                                    }}
+                                  >
+                                    <Plus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                  </button>
+                                  <button
+                                    className="p-1 rounded hover:bg-white/5"
+                                    title="Delete group"
+                                    aria-label="Delete group"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      deleteGroup(group.id);
+                                    }}
+                                  >
+                                    <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                  </button>
+                                </div>
+                              </div>
+                              {openGroupIds[group.id] && (
+                                <div className="px-3 pb-3 space-y-2">
+                                  {group.tasks?.length ? (
+                                    group.tasks.map((task) => (
+                                      <div
+                                        key={task.id}
+                                        className="relative overflow-hidden rounded border border-sidebar-border/40"
+                                      >
+                                        <div className="flex items-start gap-2 px-3 py-2">
+                                          <div className="self-start">
+                                            <Checkbox
+                                              id={`task-${task.id}`}
+                                              checked={!!task.isComplete}
+                                              onCheckedChange={(v) =>
+                                                updateTaskCompletion(
+                                                  group.id,
+                                                  task.id,
+                                                  v
+                                                )
+                                              }
+                                            >
+                                              <Checkbox.Indicator />
+                                            </Checkbox>
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div
+                                              className="whitespace-pre-wrap break-words text-foreground"
+                                              onDoubleClick={() =>
+                                                startEdit(
+                                                  {
+                                                    kind: "task",
+                                                    groupId: group.id,
+                                                    taskId: task.id,
+                                                    field: "name",
+                                                  },
+                                                  task.name
+                                                )
+                                              }
+                                            >
+                                              {editing &&
+                                              editing.kind === "task" &&
+                                              editing.groupId === group.id &&
+                                              editing.taskId === task.id &&
+                                              editing.field === "name" ? (
+                                                <div
+                                                  role="textbox"
+                                                  contentEditable
+                                                  suppressContentEditableWarning
+                                                  className="w-full bg-transparent text-sm text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
+                                                  data-editor-key={`${group.id}:${task.id}:name`}
+                                                  data-text={
+                                                    editValue || task.name
+                                                  }
+                                                  onInput={(e) =>
+                                                    setEditValue(
+                                                      (
+                                                        e.currentTarget as HTMLDivElement
+                                                      ).innerText
+                                                    )
+                                                  }
+                                                  onKeyDown={(e) => {
+                                                    if (
+                                                      e.key === "Enter" &&
+                                                      !e.shiftKey
+                                                    ) {
+                                                      e.preventDefault();
+                                                      saveEdit(
                                                         (
                                                           e.currentTarget as HTMLDivElement
                                                         ).innerText
-                                                      )
+                                                      );
                                                     }
-                                                    onKeyDown={(e) => {
-                                                      if (
-                                                        e.key === "Enter" &&
-                                                        !e.shiftKey
-                                                      ) {
-                                                        e.preventDefault();
-                                                        saveEdit(
-                                                          (
-                                                            e.currentTarget as HTMLDivElement
-                                                          ).innerText
-                                                        );
-                                                      }
-                                                      if (e.key === "Escape") {
-                                                        e.preventDefault();
-                                                        cancelEdit();
-                                                      }
-                                                    }}
-                                                  >
-                                                    {task.notes || ""}
-                                                  </div>
-                                                ) : (
-                                                  <span
-                                                    className={
-                                                      shimmerOnceKeys[
-                                                        `${group.id}:${task.id}:notes`
-                                                      ]
-                                                        ? "shimmer-once"
-                                                        : undefined
+                                                    if (e.key === "Escape") {
+                                                      e.preventDefault();
+                                                      cancelEdit();
                                                     }
-                                                    data-text={task.notes}
-                                                    onAnimationEnd={() =>
-                                                      setShimmerOnceKeys(
-                                                        (prev) => {
-                                                          const next = {
-                                                            ...prev,
-                                                          };
-                                                          delete next[
-                                                            `${group.id}:${task.id}:notes`
-                                                          ];
-                                                          return next;
-                                                        }
-                                                      )
-                                                    }
-                                                  >
-                                                    {task.notes}
-                                                  </span>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
-                                      {task.subTasks?.length > 0 &&
-                                        openTaskIds[task.id] && (
-                                          <div className="relative px-3 pb-2 space-y-1 pl-8">
-                                            <div
-                                              className="pointer-events-none absolute left-[1.375rem] bottom-12 border-l  border-white/50"
-                                              style={{
-                                                top: -(
-                                                  BASE_CONNECTOR_OVERLAP_PX +
-                                                  (openTaskNotesIds[task.id]
-                                                    ? taskNotesHeights[
-                                                        task.id
-                                                      ] || 0
-                                                    : 0)
-                                                ),
-                                              }}
-                                            ></div>
-                                            {task.subTasks.map((s) => (
-                                              <div
-                                                key={s.id}
-                                                className="relative flex items-start gap-2 px-2 py-1 text-xs rounded hover:bg-sidebar-accent/20"
-                                              >
-                                                <button
-                                                  className="absolute top-1 right-1 p-0.5 rounded hover:bg-white/5"
-                                                  title="Delete subtask"
-                                                  onClick={(e) => {
-                                                    e.preventDefault();
-                                                    deleteSubtask(
-                                                      group.id,
-                                                      task.id,
-                                                      s.id
-                                                    );
                                                   }}
                                                 >
-                                                  <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                                </button>
-                                                <span className="relative block w-6 h-5">
-                                                  <span className="absolute inset-y-1/2 -translate-y-1/2 -left-4.5 right-0 border-t  border-white/50"></span>
-                                                </span>
-                                                <Checkbox
-                                                  id={`subtask-${s.id}`}
-                                                  checked={!!s.isComplete}
-                                                  onCheckedChange={(v) =>
-                                                    updateSubtaskCompletion(
-                                                      group.id,
-                                                      task.id,
-                                                      s.id,
-                                                      v
+                                                  {task.name}
+                                                </div>
+                                              ) : (
+                                                <span
+                                                  className={
+                                                    shimmerOnceKeys[
+                                                      `${group.id}:${task.id}:name`
+                                                    ]
+                                                      ? "shimmer-once"
+                                                      : undefined
+                                                  }
+                                                  data-text={task.name}
+                                                  onAnimationEnd={() =>
+                                                    setShimmerOnceKeys(
+                                                      (prev) => {
+                                                        const next = {
+                                                          ...prev,
+                                                        };
+                                                        delete next[
+                                                          `${group.id}:${task.id}:name`
+                                                        ];
+                                                        return next;
+                                                      }
                                                     )
                                                   }
                                                 >
-                                                  <Checkbox.Indicator />
-                                                </Checkbox>
-                                                <div className="min-w-0 flex-1">
-                                                  <div
-                                                    className="whitespace-pre-wrap break-words"
-                                                    title={s.name}
-                                                    onDoubleClick={() =>
-                                                      startEdit(
-                                                        {
-                                                          kind: "subtask",
-                                                          groupId: group.id,
-                                                          taskId: task.id,
-                                                          subTaskId: s.id,
-                                                          field: "name",
-                                                        },
-                                                        s.name
-                                                      )
+                                                  {task.name}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div
+                                              className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
+                                              onDoubleClick={() =>
+                                                startEdit(
+                                                  {
+                                                    kind: "task",
+                                                    groupId: group.id,
+                                                    taskId: task.id,
+                                                    field: "description",
+                                                  },
+                                                  task.description || ""
+                                                )
+                                              }
+                                            >
+                                              {editing &&
+                                              editing.kind === "task" &&
+                                              editing.groupId === group.id &&
+                                              editing.taskId === task.id &&
+                                              editing.field ===
+                                                "description" ? (
+                                                <div
+                                                  role="textbox"
+                                                  contentEditable
+                                                  suppressContentEditableWarning
+                                                  className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
+                                                  data-editor-key={`${group.id}:${task.id}:description`}
+                                                  data-text={
+                                                    editValue ||
+                                                    task.description ||
+                                                    ""
+                                                  }
+                                                  onInput={(e) =>
+                                                    setEditValue(
+                                                      (
+                                                        e.currentTarget as HTMLDivElement
+                                                      ).innerText
+                                                    )
+                                                  }
+                                                  onKeyDown={(e) => {
+                                                    if (
+                                                      e.key === "Enter" &&
+                                                      !e.shiftKey
+                                                    ) {
+                                                      e.preventDefault();
+                                                      saveEdit(
+                                                        (
+                                                          e.currentTarget as HTMLDivElement
+                                                        ).innerText
+                                                      );
                                                     }
-                                                  >
-                                                    {editing &&
-                                                    editing.kind ===
-                                                      "subtask" &&
-                                                    editing.groupId ===
-                                                      group.id &&
-                                                    editing.taskId ===
-                                                      task.id &&
-                                                    (editing as any)
-                                                      .subTaskId === s.id &&
-                                                    editing.field === "name" ? (
-                                                      <div
-                                                        role="textbox"
-                                                        contentEditable
-                                                        suppressContentEditableWarning
-                                                        className="w-full bg-transparent text-xs text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
-                                                        data-text={
-                                                          editValue || s.name
-                                                        }
-                                                        onInput={(e) =>
-                                                          setEditValue(
-                                                            (
-                                                              e.currentTarget as HTMLDivElement
-                                                            ).innerText
-                                                          )
-                                                        }
-                                                        onKeyDown={(e) => {
-                                                          if (
-                                                            e.key === "Enter" &&
-                                                            !e.shiftKey
-                                                          ) {
-                                                            e.preventDefault();
-                                                            saveEdit(
-                                                              (
-                                                                e.currentTarget as HTMLDivElement
-                                                              ).innerText
-                                                            );
-                                                          }
-                                                          if (
-                                                            e.key === "Escape"
-                                                          ) {
-                                                            e.preventDefault();
-                                                            cancelEdit();
-                                                          }
-                                                        }}
-                                                      >
-                                                        {s.name}
-                                                      </div>
-                                                    ) : (
-                                                      <span
-                                                        className={
-                                                          shimmerOnceKeys[
-                                                            `${group.id}:${task.id}:${s.id}:name`
-                                                          ]
-                                                            ? "shimmer-once"
-                                                            : undefined
-                                                        }
-                                                        data-text={s.name}
-                                                        onAnimationEnd={() =>
-                                                          setShimmerOnceKeys(
-                                                            (prev) => {
-                                                              const next = {
-                                                                ...prev,
-                                                              };
-                                                              delete next[
-                                                                `${group.id}:${task.id}:${s.id}:name`
-                                                              ];
-                                                              return next;
-                                                            }
-                                                          )
-                                                        }
-                                                      >
-                                                        {s.name}
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                  <div
-                                                    className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
-                                                    onDoubleClick={() =>
+                                                    if (e.key === "Escape") {
+                                                      e.preventDefault();
+                                                      cancelEdit();
+                                                    }
+                                                  }}
+                                                >
+                                                  {task.description || ""}
+                                                </div>
+                                              ) : task.description ? (
+                                                <span
+                                                  className={
+                                                    shimmerOnceKeys[
+                                                      `${group.id}:${task.id}:description`
+                                                    ]
+                                                      ? "shimmer-once"
+                                                      : undefined
+                                                  }
+                                                  data-text={task.description}
+                                                  onAnimationEnd={() =>
+                                                    setShimmerOnceKeys(
+                                                      (prev) => {
+                                                        const next = {
+                                                          ...prev,
+                                                        };
+                                                        delete next[
+                                                          `${group.id}:${task.id}:description`
+                                                        ];
+                                                        return next;
+                                                      }
+                                                    )
+                                                  }
+                                                >
+                                                  {task.description}
+                                                </span>
+                                              ) : (
+                                                <div className="mt-0.5">
+                                                  <button
+                                                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                    onClick={() =>
                                                       startEdit(
                                                         {
-                                                          kind: "subtask",
+                                                          kind: "task",
                                                           groupId: group.id,
                                                           taskId: task.id,
-                                                          subTaskId: s.id,
                                                           field: "description",
                                                         },
-                                                        s.description || ""
+                                                        task.description || ""
                                                       )
                                                     }
+                                                    title="Add description"
                                                   >
-                                                    {editing &&
-                                                    editing.kind ===
-                                                      "subtask" &&
-                                                    editing.groupId ===
-                                                      group.id &&
-                                                    editing.taskId ===
-                                                      task.id &&
-                                                    (editing as any)
-                                                      .subTaskId === s.id &&
-                                                    editing.field ===
-                                                      "description" ? (
-                                                      <div
-                                                        role="textbox"
-                                                        contentEditable
-                                                        suppressContentEditableWarning
-                                                        className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
-                                                        data-text={
-                                                          editValue ||
-                                                          s.description ||
-                                                          ""
-                                                        }
-                                                        onInput={(e) =>
-                                                          setEditValue(
+                                                    Add description
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </div>
+                                            {task.notes ? (
+                                              <div className="mt-1">
+                                                <button
+                                                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                  onClick={() =>
+                                                    toggleTaskNotes(task.id)
+                                                  }
+                                                  aria-expanded={
+                                                    !!openTaskNotesIds[task.id]
+                                                  }
+                                                  title="Toggle notes"
+                                                >
+                                                  Notes
+                                                  <ChevronDown
+                                                    className={`h-3 w-3 transition-transform ${openTaskNotesIds[task.id] ? "-rotate-180" : "rotate-0"}`}
+                                                  />
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="mt-1">
+                                                <button
+                                                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                  onClick={() =>
+                                                    startEdit(
+                                                      {
+                                                        kind: "task",
+                                                        groupId: group.id,
+                                                        taskId: task.id,
+                                                        field: "notes",
+                                                      },
+                                                      task.notes || ""
+                                                    )
+                                                  }
+                                                  title="Add notes"
+                                                >
+                                                  Add notes
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="ml-auto inline-flex items-center gap-2">
+                                            <button
+                                              className="p-0.5 rounded hover:bg-white/5"
+                                              title={
+                                                task.recycle
+                                                  ? "Recycling on"
+                                                  : "Recycling off"
+                                              }
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                toggleTaskRecycle(
+                                                  group.id,
+                                                  task.id
+                                                );
+                                              }}
+                                            >
+                                              <RecycleIcon
+                                                className={`h-3.5 w-3.5 ${task.recycle ? "text-green-400" : "text-muted-foreground"} hover:text-foreground`}
+                                              />
+                                            </button>
+                                            <button
+                                              className="p-0.5 rounded hover:bg-white/5"
+                                              title="Add subtask"
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                addSubtask(group.id, task.id);
+                                              }}
+                                            >
+                                              <Plus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                            </button>
+                                            <button
+                                              className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
+                                              onClick={() =>
+                                                toggleTaskSubtasks(task.id)
+                                              }
+                                              aria-expanded={
+                                                !!openTaskIds[task.id]
+                                              }
+                                              title="Toggle subtasks"
+                                            >
+                                              <ChevronDown
+                                                className={`h-4 w-4 transition-transform ${openTaskIds[task.id] ? "-rotate-180" : "rotate-0"}`}
+                                              />
+                                            </button>
+                                            <button
+                                              className="p-0.5 rounded hover:bg-white/5"
+                                              title="Delete task"
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                deleteTask(group.id, task.id);
+                                              }}
+                                            >
+                                              <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        {openTaskNotesIds[task.id] &&
+                                          ((task.notes &&
+                                            task.notes.trim() !== "") ||
+                                            (editing &&
+                                              editing.kind === "task" &&
+                                              editing.groupId === group.id &&
+                                              editing.taskId === task.id &&
+                                              editing.field === "notes")) && (
+                                            <div
+                                              className="px-3 pb-2 pl-10"
+                                              ref={(el) => {
+                                                taskNotesRefs.current[task.id] =
+                                                  el;
+                                              }}
+                                            >
+                                              <div className="relative overflow-hidden rounded-md border border-sidebar-border/50 p-3 text-xs bg-gradient-to-br from-green-950/40 via-green-900/10 to-cyan-900/10 after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]">
+                                                <div className="flex items-center justify-between mb-1">
+                                                  <div className="font-medium text-[11px] uppercase tracking-wide text-muted-foreground">
+                                                    Notes
+                                                  </div>
+                                                  <button
+                                                    className="p-0.5  rounded hover:bg-white/5 -translate-y-1 translate-x-1"
+                                                    title="Delete notes"
+                                                    onClick={async (e) => {
+                                                      e.preventDefault();
+                                                      // clear notes and persist
+                                                      const nowIso =
+                                                        new Date().toISOString();
+                                                      setSelectedDoc((prev) => {
+                                                        if (!prev) return prev;
+                                                        const next: TaskDocument =
+                                                          {
+                                                            ...prev,
+                                                            updatedAt: nowIso,
+                                                            taskGroups:
+                                                              prev.taskGroups.map(
+                                                                (g) =>
+                                                                  g.id !==
+                                                                  group.id
+                                                                    ? g
+                                                                    : {
+                                                                        ...g,
+                                                                        tasks:
+                                                                          g.tasks.map(
+                                                                            (
+                                                                              t
+                                                                            ) =>
+                                                                              t.id !==
+                                                                              task.id
+                                                                                ? t
+                                                                                : {
+                                                                                    ...t,
+                                                                                    notes:
+                                                                                      null,
+                                                                                    updatedAt:
+                                                                                      nowIso,
+                                                                                  }
+                                                                          ),
+                                                                      }
+                                                              ),
+                                                          };
+                                                        // optimistic UI; persist async
+                                                        (async () => {
+                                                          try {
+                                                            if (selectedPath) {
+                                                              await window.api?.writeJsonFile?.(
+                                                                selectedPath,
+                                                                next
+                                                              );
+                                                            }
+                                                          } catch (err) {
+                                                            console.error(
+                                                              "Failed to write JSON:",
+                                                              err
+                                                            );
+                                                          }
+                                                        })();
+                                                        setOpenTaskNotesIds(
+                                                          (prev) => ({
+                                                            ...prev,
+                                                            [task.id]: false,
+                                                          })
+                                                        );
+                                                        return next;
+                                                      });
+                                                    }}
+                                                  >
+                                                    <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                                  </button>
+                                                </div>
+                                                <div
+                                                  className="whitespace-pre-wrap break-words text-foreground/90"
+                                                  onDoubleClick={() =>
+                                                    startEdit(
+                                                      {
+                                                        kind: "task",
+                                                        groupId: group.id,
+                                                        taskId: task.id,
+                                                        field: "notes",
+                                                      },
+                                                      task.notes || ""
+                                                    )
+                                                  }
+                                                >
+                                                  {editing &&
+                                                  editing.kind === "task" &&
+                                                  editing.groupId ===
+                                                    group.id &&
+                                                  editing.taskId === task.id &&
+                                                  editing.field === "notes" ? (
+                                                    <div
+                                                      role="textbox"
+                                                      contentEditable
+                                                      suppressContentEditableWarning
+                                                      className="w-full bg-transparent text-xs text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
+                                                      data-editor-key={`${group.id}:${task.id}:notes`}
+                                                      data-text={
+                                                        editValue ||
+                                                        task.notes ||
+                                                        ""
+                                                      }
+                                                      onInput={(e) =>
+                                                        setEditValue(
+                                                          (
+                                                            e.currentTarget as HTMLDivElement
+                                                          ).innerText
+                                                        )
+                                                      }
+                                                      onKeyDown={(e) => {
+                                                        if (
+                                                          e.key === "Enter" &&
+                                                          !e.shiftKey
+                                                        ) {
+                                                          e.preventDefault();
+                                                          saveEdit(
                                                             (
                                                               e.currentTarget as HTMLDivElement
                                                             ).innerText
-                                                          )
+                                                          );
                                                         }
-                                                        onKeyDown={(e) => {
-                                                          if (
-                                                            e.key === "Enter" &&
-                                                            !e.shiftKey
-                                                          ) {
-                                                            e.preventDefault();
-                                                            saveEdit(
+                                                        if (
+                                                          e.key === "Escape"
+                                                        ) {
+                                                          e.preventDefault();
+                                                          cancelEdit();
+                                                        }
+                                                      }}
+                                                    >
+                                                      {task.notes || ""}
+                                                    </div>
+                                                  ) : (
+                                                    <span
+                                                      className={
+                                                        shimmerOnceKeys[
+                                                          `${group.id}:${task.id}:notes`
+                                                        ]
+                                                          ? "shimmer-once"
+                                                          : undefined
+                                                      }
+                                                      data-text={task.notes}
+                                                      onAnimationEnd={() =>
+                                                        setShimmerOnceKeys(
+                                                          (prev) => {
+                                                            const next = {
+                                                              ...prev,
+                                                            };
+                                                            delete next[
+                                                              `${group.id}:${task.id}:notes`
+                                                            ];
+                                                            return next;
+                                                          }
+                                                        )
+                                                      }
+                                                    >
+                                                      {task.notes}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                        {task.subTasks?.length > 0 &&
+                                          openTaskIds[task.id] && (
+                                            <div className="relative px-3 pb-2 space-y-1 pl-8">
+                                              <div
+                                                className="pointer-events-none absolute left-[1.375rem] bottom-12 border-l  border-white/50"
+                                                style={{
+                                                  top: -(
+                                                    BASE_CONNECTOR_OVERLAP_PX +
+                                                    (openTaskNotesIds[task.id]
+                                                      ? taskNotesHeights[
+                                                          task.id
+                                                        ] || 0
+                                                      : 0)
+                                                  ),
+                                                }}
+                                              ></div>
+                                              {task.subTasks.map((s) => (
+                                                <div
+                                                  key={s.id}
+                                                  className="relative flex items-start gap-2 px-2 py-1 text-xs rounded hover:bg-sidebar-accent/20"
+                                                >
+                                                  <button
+                                                    className="absolute top-1 right-1 p-0.5 rounded hover:bg-white/5"
+                                                    title="Delete subtask"
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      deleteSubtask(
+                                                        group.id,
+                                                        task.id,
+                                                        s.id
+                                                      );
+                                                    }}
+                                                  >
+                                                    <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                                  </button>
+                                                  <span className="relative block w-6 h-5">
+                                                    <span className="absolute inset-y-1/2 -translate-y-1/2 -left-4.5 right-0 border-t  border-white/50"></span>
+                                                  </span>
+                                                  <Checkbox
+                                                    id={`subtask-${s.id}`}
+                                                    checked={!!s.isComplete}
+                                                    onCheckedChange={(v) =>
+                                                      updateSubtaskCompletion(
+                                                        group.id,
+                                                        task.id,
+                                                        s.id,
+                                                        v
+                                                      )
+                                                    }
+                                                  >
+                                                    <Checkbox.Indicator />
+                                                  </Checkbox>
+                                                  <div className="min-w-0 flex-1">
+                                                    <div
+                                                      className="whitespace-pre-wrap break-words"
+                                                      title={s.name}
+                                                      onDoubleClick={() =>
+                                                        startEdit(
+                                                          {
+                                                            kind: "subtask",
+                                                            groupId: group.id,
+                                                            taskId: task.id,
+                                                            subTaskId: s.id,
+                                                            field: "name",
+                                                          },
+                                                          s.name
+                                                        )
+                                                      }
+                                                    >
+                                                      {editing &&
+                                                      editing.kind ===
+                                                        "subtask" &&
+                                                      editing.groupId ===
+                                                        group.id &&
+                                                      editing.taskId ===
+                                                        task.id &&
+                                                      (editing as any)
+                                                        .subTaskId === s.id &&
+                                                      editing.field ===
+                                                        "name" ? (
+                                                        <div
+                                                          role="textbox"
+                                                          contentEditable
+                                                          suppressContentEditableWarning
+                                                          className="w-full bg-transparent text-xs text-muted-foreground rainbow-caret-hidden-caret shimmer-edit"
+                                                          data-editor-key={`${group.id}:${task.id}:${s.id}:name`}
+                                                          data-text={
+                                                            editValue || s.name
+                                                          }
+                                                          onInput={(e) =>
+                                                            setEditValue(
                                                               (
                                                                 e.currentTarget as HTMLDivElement
                                                               ).innerText
-                                                            );
+                                                            )
                                                           }
-                                                          if (
-                                                            e.key === "Escape"
-                                                          ) {
-                                                            e.preventDefault();
-                                                            cancelEdit();
-                                                          }
-                                                        }}
-                                                      >
-                                                        {s.description || ""}
-                                                      </div>
-                                                    ) : s.description ? (
-                                                      <span
-                                                        className={
-                                                          shimmerOnceKeys[
-                                                            `${group.id}:${task.id}:${s.id}:description`
-                                                          ]
-                                                            ? "shimmer-once"
-                                                            : undefined
-                                                        }
-                                                        data-text={
-                                                          s.description
-                                                        }
-                                                        onAnimationEnd={() =>
-                                                          setShimmerOnceKeys(
-                                                            (prev) => {
-                                                              const next = {
-                                                                ...prev,
-                                                              };
-                                                              delete next[
-                                                                `${group.id}:${task.id}:${s.id}:description`
-                                                              ];
-                                                              return next;
-                                                            }
-                                                          )
-                                                        }
-                                                      >
-                                                        {s.description}
-                                                      </span>
-                                                    ) : null}
-                                                  </div>
-                                                  {s.notes ? (
-                                                    <div className="mt-1">
-                                                      <button
-                                                        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                                                        onClick={(e) => {
-                                                          e.preventDefault();
-                                                          toggleSubtaskNotes(
-                                                            task.id,
-                                                            s.id
-                                                          );
-                                                        }}
-                                                        aria-expanded={
-                                                          !!openSubtaskNotesIds[
-                                                            `${task.id}:${s.id}`
-                                                          ]
-                                                        }
-                                                        title="Toggle notes"
-                                                      >
-                                                        Notes
-                                                        <ChevronDown
-                                                          className={`h-3 w-3 transition-transform ${openSubtaskNotesIds[`${task.id}:${s.id}`] ? "-rotate-180" : "rotate-0"}`}
-                                                        />
-                                                      </button>
-                                                    </div>
-                                                  ) : (
-                                                    <div className="mt-1">
-                                                      <button
-                                                        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                                                        onClick={() =>
-                                                          startEdit(
-                                                            {
-                                                              kind: "subtask",
-                                                              groupId: group.id,
-                                                              taskId: task.id,
-                                                              subTaskId: s.id,
-                                                              field: "notes",
-                                                            },
-                                                            s.notes || ""
-                                                          )
-                                                        }
-                                                        title="Add notes"
-                                                      >
-                                                        Add notes
-                                                      </button>
-                                                    </div>
-                                                  )}
-                                                  {openSubtaskNotesIds[
-                                                    `${task.id}:${s.id}`
-                                                  ] &&
-                                                    ((s.notes &&
-                                                      s.notes.trim() !== "") ||
-                                                      (editing &&
-                                                        editing.kind ===
-                                                          "subtask" &&
-                                                        editing.groupId ===
-                                                          group.id &&
-                                                        editing.taskId ===
-                                                          task.id &&
-                                                        (editing as any)
-                                                          .subTaskId === s.id &&
-                                                        editing.field ===
-                                                          "notes")) && (
-                                                      <div className="mt-1 relative overflow-hidden rounded-md border border-sidebar-border/50 p-2 bg-gradient-to-br from-violet-950/40 via-violet-900/10 to-indigo-900/10 after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#8aa2ed_1px,_transparent_0)] after:bg-[size:5px_5px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]">
-                                                        <div className="flex items-center justify-between mb-1">
-                                                          <div className="font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
-                                                            Notes
-                                                          </div>
-                                                          <button
-                                                            className="p-0.5 rounded hover:bg-white/5 -translate-y-1 translate-x-1"
-                                                            title="Delete notes"
-                                                            onClick={async (
-                                                              e
-                                                            ) => {
+                                                          onKeyDown={(e) => {
+                                                            if (
+                                                              e.key ===
+                                                                "Enter" &&
+                                                              !e.shiftKey
+                                                            ) {
                                                               e.preventDefault();
-                                                              const nowIso =
-                                                                new Date().toISOString();
-                                                              setSelectedDoc(
-                                                                (prev) => {
-                                                                  if (!prev)
-                                                                    return prev;
-                                                                  const next: TaskDocument =
-                                                                    {
-                                                                      ...prev,
-                                                                      updatedAt:
-                                                                        nowIso,
-                                                                      taskGroups:
-                                                                        prev.taskGroups.map(
-                                                                          (
-                                                                            g
-                                                                          ) =>
-                                                                            g.id !==
-                                                                            group.id
-                                                                              ? g
-                                                                              : {
-                                                                                  ...g,
-                                                                                  tasks:
-                                                                                    g.tasks.map(
-                                                                                      (
-                                                                                        t
-                                                                                      ) =>
-                                                                                        t.id !==
-                                                                                        task.id
-                                                                                          ? t
-                                                                                          : {
-                                                                                              ...t,
-                                                                                              updatedAt:
-                                                                                                nowIso,
-                                                                                              subTasks:
-                                                                                                (
-                                                                                                  t.subTasks ||
-                                                                                                  []
-                                                                                                ).map(
-                                                                                                  (
-                                                                                                    ss
-                                                                                                  ) =>
-                                                                                                    ss.id ===
-                                                                                                    s.id
-                                                                                                      ? {
-                                                                                                          ...ss,
-                                                                                                          notes:
-                                                                                                            null,
-                                                                                                          updatedAt:
-                                                                                                            nowIso,
-                                                                                                        }
-                                                                                                      : ss
-                                                                                                ),
-                                                                                            }
-                                                                                    ),
-                                                                                }
-                                                                        ),
-                                                                    };
-                                                                  (async () => {
-                                                                    try {
-                                                                      if (
-                                                                        selectedPath
-                                                                      ) {
-                                                                        await window.api?.writeJsonFile?.(
-                                                                          selectedPath,
-                                                                          next
-                                                                        );
-                                                                      }
-                                                                    } catch (err) {
-                                                                      console.error(
-                                                                        "Failed to write JSON:",
-                                                                        err
-                                                                      );
-                                                                    }
-                                                                  })();
-                                                                  setOpenSubtaskNotesIds(
-                                                                    (
-                                                                      prevMap
-                                                                    ) => ({
-                                                                      ...prevMap,
-                                                                      [`${task.id}:${s.id}`]: false,
-                                                                    })
-                                                                  );
-                                                                  return next;
-                                                                }
+                                                              saveEdit(
+                                                                (
+                                                                  e.currentTarget as HTMLDivElement
+                                                                ).innerText
                                                               );
-                                                            }}
+                                                            }
+                                                            if (
+                                                              e.key === "Escape"
+                                                            ) {
+                                                              e.preventDefault();
+                                                              cancelEdit();
+                                                            }
+                                                          }}
+                                                        >
+                                                          {s.name}
+                                                        </div>
+                                                      ) : (
+                                                        <span
+                                                          className={
+                                                            shimmerOnceKeys[
+                                                              `${group.id}:${task.id}:${s.id}:name`
+                                                            ]
+                                                              ? "shimmer-once"
+                                                              : undefined
+                                                          }
+                                                          data-text={s.name}
+                                                          onAnimationEnd={() =>
+                                                            setShimmerOnceKeys(
+                                                              (prev) => {
+                                                                const next = {
+                                                                  ...prev,
+                                                                };
+                                                                delete next[
+                                                                  `${group.id}:${task.id}:${s.id}:name`
+                                                                ];
+                                                                return next;
+                                                              }
+                                                            )
+                                                          }
+                                                        >
+                                                          {s.name}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <div
+                                                      className="text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
+                                                      onDoubleClick={() =>
+                                                        startEdit(
+                                                          {
+                                                            kind: "subtask",
+                                                            groupId: group.id,
+                                                            taskId: task.id,
+                                                            subTaskId: s.id,
+                                                            field:
+                                                              "description",
+                                                          },
+                                                          s.description || ""
+                                                        )
+                                                      }
+                                                    >
+                                                      {editing &&
+                                                      editing.kind ===
+                                                        "subtask" &&
+                                                      editing.groupId ===
+                                                        group.id &&
+                                                      editing.taskId ===
+                                                        task.id &&
+                                                      (editing as any)
+                                                        .subTaskId === s.id &&
+                                                      editing.field ===
+                                                        "description" ? (
+                                                        <div
+                                                          role="textbox"
+                                                          contentEditable
+                                                          suppressContentEditableWarning
+                                                          className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
+                                                          data-editor-key={`${group.id}:${task.id}:${s.id}:description`}
+                                                          data-text={
+                                                            editValue ||
+                                                            s.description ||
+                                                            ""
+                                                          }
+                                                          onInput={(e) =>
+                                                            setEditValue(
+                                                              (
+                                                                e.currentTarget as HTMLDivElement
+                                                              ).innerText
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) => {
+                                                            if (
+                                                              e.key ===
+                                                                "Enter" &&
+                                                              !e.shiftKey
+                                                            ) {
+                                                              e.preventDefault();
+                                                              saveEdit(
+                                                                (
+                                                                  e.currentTarget as HTMLDivElement
+                                                                ).innerText
+                                                              );
+                                                            }
+                                                            if (
+                                                              e.key === "Escape"
+                                                            ) {
+                                                              e.preventDefault();
+                                                              cancelEdit();
+                                                            }
+                                                          }}
+                                                        >
+                                                          {s.description || ""}
+                                                        </div>
+                                                      ) : s.description ? (
+                                                        <span
+                                                          className={
+                                                            shimmerOnceKeys[
+                                                              `${group.id}:${task.id}:${s.id}:description`
+                                                            ]
+                                                              ? "shimmer-once"
+                                                              : undefined
+                                                          }
+                                                          data-text={
+                                                            s.description
+                                                          }
+                                                          onAnimationEnd={() =>
+                                                            setShimmerOnceKeys(
+                                                              (prev) => {
+                                                                const next = {
+                                                                  ...prev,
+                                                                };
+                                                                delete next[
+                                                                  `${group.id}:${task.id}:${s.id}:description`
+                                                                ];
+                                                                return next;
+                                                              }
+                                                            )
+                                                          }
+                                                        >
+                                                          {s.description}
+                                                        </span>
+                                                      ) : (
+                                                        <div className="mt-0.5">
+                                                          <button
+                                                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                            onClick={() =>
+                                                              startEdit(
+                                                                {
+                                                                  kind: "subtask",
+                                                                  groupId:
+                                                                    group.id,
+                                                                  taskId:
+                                                                    task.id,
+                                                                  subTaskId:
+                                                                    s.id,
+                                                                  field:
+                                                                    "description",
+                                                                },
+                                                                s.description ||
+                                                                  ""
+                                                              )
+                                                            }
+                                                            title="Add description"
                                                           >
-                                                            <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                                            Add description
                                                           </button>
                                                         </div>
-                                                        <div
-                                                          className="text-[11px] whitespace-pre-wrap break-words text-foreground/90"
-                                                          onDoubleClick={() =>
+                                                      )}
+                                                    </div>
+                                                    {s.notes ? (
+                                                      <div className="mt-1">
+                                                        <button
+                                                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                          onClick={(e) => {
+                                                            e.preventDefault();
+                                                            toggleSubtaskNotes(
+                                                              task.id,
+                                                              s.id
+                                                            );
+                                                          }}
+                                                          aria-expanded={
+                                                            !!openSubtaskNotesIds[
+                                                              `${task.id}:${s.id}`
+                                                            ]
+                                                          }
+                                                          title="Toggle notes"
+                                                        >
+                                                          Notes
+                                                          <ChevronDown
+                                                            className={`h-3 w-3 transition-transform ${openSubtaskNotesIds[`${task.id}:${s.id}`] ? "-rotate-180" : "rotate-0"}`}
+                                                          />
+                                                        </button>
+                                                      </div>
+                                                    ) : (
+                                                      <div className="mt-1">
+                                                        <button
+                                                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                          onClick={() =>
                                                             startEdit(
                                                               {
                                                                 kind: "subtask",
@@ -3454,8 +3731,19 @@ function App() {
                                                               s.notes || ""
                                                             )
                                                           }
+                                                          title="Add notes"
                                                         >
-                                                          {editing &&
+                                                          Add notes
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                    {openSubtaskNotesIds[
+                                                      `${task.id}:${s.id}`
+                                                    ] &&
+                                                      ((s.notes &&
+                                                        s.notes.trim() !==
+                                                          "") ||
+                                                        (editing &&
                                                           editing.kind ===
                                                             "subtask" &&
                                                           editing.groupId ===
@@ -3466,107 +3754,345 @@ function App() {
                                                             .subTaskId ===
                                                             s.id &&
                                                           editing.field ===
-                                                            "notes" ? (
-                                                            <div
-                                                              role="textbox"
-                                                              contentEditable
-                                                              suppressContentEditableWarning
-                                                              className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
-                                                              data-text={
-                                                                editValue ||
-                                                                s.notes ||
-                                                                ""
-                                                              }
-                                                              onInput={(e) =>
-                                                                setEditValue(
-                                                                  (
-                                                                    e.currentTarget as HTMLDivElement
-                                                                  ).innerText
-                                                                )
-                                                              }
-                                                              onKeyDown={(
+                                                            "notes")) && (
+                                                        <div className="mt-1 relative overflow-hidden rounded-md border border-sidebar-border/50 p-2 bg-gradient-to-br from-violet-950/40 via-violet-900/10 to-indigo-900/10 after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#8aa2ed_1px,_transparent_0)] after:bg-[size:5px_5px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]">
+                                                          <div className="flex items-center justify-between mb-1">
+                                                            <div className="font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
+                                                              Notes
+                                                            </div>
+                                                            <button
+                                                              className="p-0.5 rounded hover:bg-white/5 -translate-y-1 translate-x-1"
+                                                              title="Delete notes"
+                                                              onClick={async (
                                                                 e
                                                               ) => {
-                                                                if (
-                                                                  e.key ===
-                                                                    "Enter" &&
-                                                                  !e.shiftKey
-                                                                ) {
-                                                                  e.preventDefault();
-                                                                  saveEdit(
+                                                                e.preventDefault();
+                                                                const nowIso =
+                                                                  new Date().toISOString();
+                                                                setSelectedDoc(
+                                                                  (prev) => {
+                                                                    if (!prev)
+                                                                      return prev;
+                                                                    const next: TaskDocument =
+                                                                      {
+                                                                        ...prev,
+                                                                        updatedAt:
+                                                                          nowIso,
+                                                                        taskGroups:
+                                                                          prev.taskGroups.map(
+                                                                            (
+                                                                              g
+                                                                            ) =>
+                                                                              g.id !==
+                                                                              group.id
+                                                                                ? g
+                                                                                : {
+                                                                                    ...g,
+                                                                                    tasks:
+                                                                                      g.tasks.map(
+                                                                                        (
+                                                                                          t
+                                                                                        ) =>
+                                                                                          t.id !==
+                                                                                          task.id
+                                                                                            ? t
+                                                                                            : {
+                                                                                                ...t,
+                                                                                                updatedAt:
+                                                                                                  nowIso,
+                                                                                                subTasks:
+                                                                                                  (
+                                                                                                    t.subTasks ||
+                                                                                                    []
+                                                                                                  ).map(
+                                                                                                    (
+                                                                                                      ss
+                                                                                                    ) =>
+                                                                                                      ss.id ===
+                                                                                                      s.id
+                                                                                                        ? {
+                                                                                                            ...ss,
+                                                                                                            notes:
+                                                                                                              null,
+                                                                                                            updatedAt:
+                                                                                                              nowIso,
+                                                                                                          }
+                                                                                                        : ss
+                                                                                                  ),
+                                                                                              }
+                                                                                      ),
+                                                                                  }
+                                                                          ),
+                                                                      };
+                                                                    (async () => {
+                                                                      try {
+                                                                        if (
+                                                                          selectedPath
+                                                                        ) {
+                                                                          await window.api?.writeJsonFile?.(
+                                                                            selectedPath,
+                                                                            next
+                                                                          );
+                                                                        }
+                                                                      } catch (err) {
+                                                                        console.error(
+                                                                          "Failed to write JSON:",
+                                                                          err
+                                                                        );
+                                                                      }
+                                                                    })();
+                                                                    setOpenSubtaskNotesIds(
+                                                                      (
+                                                                        prevMap
+                                                                      ) => ({
+                                                                        ...prevMap,
+                                                                        [`${task.id}:${s.id}`]: false,
+                                                                      })
+                                                                    );
+                                                                    return next;
+                                                                  }
+                                                                );
+                                                              }}
+                                                            >
+                                                              <TrashIcon className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                                            </button>
+                                                          </div>
+                                                          <div
+                                                            className="text-[11px] whitespace-pre-wrap break-words text-foreground/90"
+                                                            onDoubleClick={() =>
+                                                              startEdit(
+                                                                {
+                                                                  kind: "subtask",
+                                                                  groupId:
+                                                                    group.id,
+                                                                  taskId:
+                                                                    task.id,
+                                                                  subTaskId:
+                                                                    s.id,
+                                                                  field:
+                                                                    "notes",
+                                                                },
+                                                                s.notes || ""
+                                                              )
+                                                            }
+                                                          >
+                                                            {editing &&
+                                                            editing.kind ===
+                                                              "subtask" &&
+                                                            editing.groupId ===
+                                                              group.id &&
+                                                            editing.taskId ===
+                                                              task.id &&
+                                                            (editing as any)
+                                                              .subTaskId ===
+                                                              s.id &&
+                                                            editing.field ===
+                                                              "notes" ? (
+                                                              <div
+                                                                role="textbox"
+                                                                contentEditable
+                                                                suppressContentEditableWarning
+                                                                className="w-full bg-transparent text-[11px] text-muted-foreground whitespace-pre-wrap break-words rainbow-caret-hidden-caret shimmer-edit"
+                                                                data-editor-key={`${group.id}:${task.id}:${s.id}:notes`}
+                                                                data-text={
+                                                                  editValue ||
+                                                                  s.notes ||
+                                                                  ""
+                                                                }
+                                                                onInput={(e) =>
+                                                                  setEditValue(
                                                                     (
                                                                       e.currentTarget as HTMLDivElement
                                                                     ).innerText
-                                                                  );
+                                                                  )
                                                                 }
-                                                                if (
-                                                                  e.key ===
-                                                                  "Escape"
-                                                                ) {
-                                                                  e.preventDefault();
-                                                                  cancelEdit();
-                                                                }
-                                                              }}
-                                                            >
-                                                              {s.notes || ""}
-                                                            </div>
-                                                          ) : (
-                                                            <span
-                                                              className={
-                                                                shimmerOnceKeys[
-                                                                  `${group.id}:${task.id}:${s.id}:notes`
-                                                                ]
-                                                                  ? "shimmer-once"
-                                                                  : undefined
-                                                              }
-                                                              data-text={
-                                                                s.notes
-                                                              }
-                                                              onAnimationEnd={() =>
-                                                                setShimmerOnceKeys(
-                                                                  (prev) => {
-                                                                    const next =
-                                                                      {
-                                                                        ...prev,
-                                                                      };
-                                                                    delete next[
-                                                                      `${group.id}:${task.id}:${s.id}:notes`
-                                                                    ];
-                                                                    return next;
+                                                                onKeyDown={(
+                                                                  e
+                                                                ) => {
+                                                                  if (
+                                                                    e.key ===
+                                                                      "Enter" &&
+                                                                    !e.shiftKey
+                                                                  ) {
+                                                                    e.preventDefault();
+                                                                    saveEdit(
+                                                                      (
+                                                                        e.currentTarget as HTMLDivElement
+                                                                      )
+                                                                        .innerText
+                                                                    );
                                                                   }
-                                                                )
-                                                              }
-                                                            >
-                                                              {s.notes}
-                                                            </span>
-                                                          )}
+                                                                  if (
+                                                                    e.key ===
+                                                                    "Escape"
+                                                                  ) {
+                                                                    e.preventDefault();
+                                                                    cancelEdit();
+                                                                  }
+                                                                }}
+                                                              >
+                                                                {s.notes || ""}
+                                                              </div>
+                                                            ) : (
+                                                              <span
+                                                                className={
+                                                                  shimmerOnceKeys[
+                                                                    `${group.id}:${task.id}:${s.id}:notes`
+                                                                  ]
+                                                                    ? "shimmer-once"
+                                                                    : undefined
+                                                                }
+                                                                data-text={
+                                                                  s.notes
+                                                                }
+                                                                onAnimationEnd={() =>
+                                                                  setShimmerOnceKeys(
+                                                                    (prev) => {
+                                                                      const next =
+                                                                        {
+                                                                          ...prev,
+                                                                        };
+                                                                      delete next[
+                                                                        `${group.id}:${task.id}:${s.id}:notes`
+                                                                      ];
+                                                                      return next;
+                                                                    }
+                                                                  )
+                                                                }
+                                                              >
+                                                                {s.notes}
+                                                              </span>
+                                                            )}
+                                                          </div>
                                                         </div>
-                                                      </div>
-                                                    )}
+                                                      )}
+                                                  </div>
                                                 </div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
+                                              ))}
+                                            </div>
+                                          )}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="text-xs text-muted-foreground">
+                                      No tasks
                                     </div>
-                                  ))
-                                ) : (
-                                  <div className="text-xs text-muted-foreground">
-                                    No tasks
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        ))
-                      )}
+                                  )}
+                                </div>
+                              )}
+                            </motion.div>
+                          ))
+                        )}
+                      </AnimatePresence>
                     </div>
                   </section>
                   <section className="flex-1 min-w-0 h-full bg-black/50 backdrop-blur-md">
-                    <div className="flex flex-col h-full">
-                      <div className="h-1/2 border-b border-border">
-                        <div className="h-12 border-b border-border px-4 flex items-center">
+                    <div className="flex flex-col h-full min-h-0">
+                      <div className="h-1/3 border-b border-border">
+                        <div className="h-12 border-b border-border px-4 flex items-center justify-between">
+                          <h2 className="text-sm font-medium">Timer</h2>
+                          <div className="flex items-center gap-2">
+                            <button
+                              className={`text-xs px-3 py-1 rounded-md border ${timerRunning ? "border-red-400/50 bg-red-500/20 hover:bg-red-500/30" : "border-emerald-400/50 bg-emerald-500/20 hover:bg-emerald-500/30"}`}
+                              onClick={() => setTimerRunning((r) => !r)}
+                            >
+                              {timerRunning ? "Stop" : "Start"}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="p-4 h-[calc(100%-48px)]">
+                          <AnimatePresence mode="wait">
+                            <motion.div
+                              key={
+                                selectedDoc ? selectedDoc.id : "no-doc-timer"
+                              }
+                              initial={{ opacity: 0, scale: 0.98 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.98 }}
+                              transition={{ duration: 0.18 }}
+                              className="h-full"
+                            >
+                              <div className="h-full grid grid-cols-2 gap-6">
+                                <div className="flex flex-col content-start justify-center overflow-hidden">
+                                  <div className="grid grid-cols-3 gap-3 overflow-auto pr-1">
+                                    {timerOptions.map((m) => {
+                                      const isSelected = m === timerMinutes;
+                                      return (
+                                        <button
+                                          key={m}
+                                          type="button"
+                                          className={`py-3 rounded-lg border text-base transition-colors ${
+                                            isSelected
+                                              ? "border-emerald-400/70 bg-emerald-500/20"
+                                              : "border-border bg-secondary/10 hover:bg-secondary/20"
+                                          } ${timerRunning ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                                          onClick={() =>
+                                            !timerRunning && setTimerMinutes(m)
+                                          }
+                                          disabled={timerRunning}
+                                          aria-pressed={isSelected}
+                                          aria-label={`${m} minutes`}
+                                        >
+                                          {m}m
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <div className="w-40 h-40 relative flex items-center justify-center">
+                                    <svg
+                                      width={ringSizePx}
+                                      height={ringSizePx}
+                                      viewBox={`0 0 ${ringSizePx} ${ringSizePx}`}
+                                      className="absolute inset-0"
+                                      role="img"
+                                      aria-label="Timer progress ring"
+                                    >
+                                      <circle
+                                        cx={ringCenter}
+                                        cy={ringCenter}
+                                        r={ringRadius}
+                                        fill="none"
+                                        stroke="rgba(255,255,255,0.08)"
+                                        strokeWidth={ringStrokeWidth}
+                                      />
+                                      <g
+                                        transform={`rotate(-90 ${ringCenter} ${ringCenter})`}
+                                      >
+                                        <circle
+                                          cx={ringCenter}
+                                          cy={ringCenter}
+                                          r={ringRadius}
+                                          fill="none"
+                                          stroke={ringStrokeColor}
+                                          strokeWidth={ringStrokeWidth}
+                                          strokeLinecap="round"
+                                          strokeDasharray={ringDashArray}
+                                          strokeDashoffset={0}
+                                          style={{
+                                            transition:
+                                              "stroke-dasharray 0.25s linear, stroke 0.5s linear",
+                                          }}
+                                        />
+                                      </g>
+                                    </svg>
+                                    <div className="text-3xl tabular-nums tracking-wider select-none">
+                                      {formatTimer(timerRemainingSec)}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </motion.div>
+                          </AnimatePresence>
+                        </div>
+                      </div>
+                      <div className="h-1/4 border-b border-border shrink-0">
+                        <div className="h-12 border-b border-border px-4 flex items-center justify-between">
                           <h2 className="text-sm font-medium">Heatmap</h2>
+                          <div className="text-xs text-muted-foreground tabular-nums">
+                            {hoveredHeatmapDate ?? ""}
+                          </div>
                         </div>
                         <div className="p-4 text-sm h-[calc(100%-48px)] overflow-auto">
                           {dailyProgress.length === 0 ? (
@@ -3574,12 +4100,18 @@ function App() {
                               No daily data
                             </div>
                           ) : (
-                            <div className="grid grid-cols-14 gap-1">
+                            <div className="flex gap-2 flex-wrap">
                               {dailyProgress.map((d) => (
                                 <div key={d.date} className="group">
                                   <div
-                                    className={`h-6 w-6 rounded-md border border-white/10 ${getHeatCellClass(d.percent, d.total > 0)}`}
+                                    className={`h-6 w-6 rounded-md ${getHeatCellClass(d.percent, d.total > 0)}`}
                                     title={`${d.date}: ${d.completed}/${d.total} (${d.percent}%)`}
+                                    onMouseEnter={() =>
+                                      setHoveredHeatmapDate(d.date)
+                                    }
+                                    onMouseLeave={() =>
+                                      setHoveredHeatmapDate(null)
+                                    }
                                   />
                                   <div className="sr-only">{d.date}</div>
                                 </div>
@@ -3588,65 +4120,93 @@ function App() {
                           )}
                         </div>
                       </div>
-                      <div className="h-1/2">
-                        <div className="h-12 border-b border-border px-4 flex items-center">
+                      <div className="flex-1 min-h-0">
+                        <div className="h-12 border-b border-border px-4 flex items-center justify-between">
                           <h2 className="text-sm font-medium">
                             Today's Progress
                           </h2>
+                          {selectedDoc
+                            ? (() => {
+                                const totals =
+                                  computeDocumentTotals(selectedDoc);
+                                const percent =
+                                  totals.total === 0
+                                    ? 0
+                                    : Math.round(
+                                        (totals.completed / totals.total) * 100
+                                      );
+                                return (
+                                  <SmallCircularProgress percent={percent} />
+                                );
+                              })()
+                            : null}
                         </div>
-                        <div className="p-4 text-sm h-[calc(100%-48px)] overflow-auto space-y-3">
-                          {!selectedDoc ? (
-                            <div className="text-muted-foreground">
-                              Select a task or template from the sidebar
-                            </div>
-                          ) : (
-                            (selectedDoc.taskGroups || []).map((g) => {
-                              const p = computeGroupProgress(g);
-                              return (
-                                <div
-                                  key={g.id}
-                                  className="rounded-lg border border-border bg-secondary/10 p-3 relative overflow-hidden"
-                                >
-                                  <div className="flex items-center justify-between mb-2">
-                                    <div
-                                      className={`font-medium truncate pr-2 ${groupShimmerKeys[g.id] ? "shimmer-once" : ""}`}
-                                      data-text={g.name}
-                                      onAnimationEnd={() => {
-                                        if (groupShimmerKeys[g.id]) {
-                                          setGroupShimmerKeys((prev) => {
-                                            const next = { ...prev };
-                                            delete next[g.id];
-                                            return next;
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      {g.name}
+                        <div className="p-4 text-sm h-[calc(100%-48px)] overflow-auto grid grid-cols-2 auto-rows-max gap-3 content-start">
+                          <AnimatePresence mode="wait">
+                            {!selectedDoc ? (
+                              <motion.div
+                                key="no-doc-summary"
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -8 }}
+                                transition={{ duration: 0.2 }}
+                                className="text-muted-foreground"
+                              >
+                                Select a task or template from the sidebar
+                              </motion.div>
+                            ) : (
+                              (selectedDoc.taskGroups || []).map((g) => {
+                                const p = computeGroupProgress(g);
+                                return (
+                                  <motion.div
+                                    key={g.id}
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -8 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="rounded-lg border border-border bg-secondary/10 p-3 relative overflow-hidden shrink-0"
+                                  >
+                                    <div className="flex items-center justify-between mb-2">
+                                      <div
+                                        className={`font-medium truncate pr-2 ${groupShimmerKeys[g.id] ? "shimmer-once" : ""}`}
+                                        data-text={g.name}
+                                        onAnimationEnd={() => {
+                                          if (groupShimmerKeys[g.id]) {
+                                            setGroupShimmerKeys((prev) => {
+                                              const next = { ...prev };
+                                              delete next[g.id];
+                                              return next;
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        {g.name}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground tabular-nums">
+                                        {p.percent}%
+                                      </div>
                                     </div>
-                                    <div className="text-xs text-muted-foreground tabular-nums">
-                                      {p.percent}%
+                                    <div className="h-3 rounded-full bg-muted/30 border border-border/60 relative overflow-hidden">
+                                      <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: p.percent + "%" }}
+                                        transition={{
+                                          type: "spring",
+                                          stiffness: 200,
+                                          damping: 30,
+                                        }}
+                                        className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-emerald-400"
+                                      />
+                                      <div className="pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_right,transparent,black_20%,black_80%,transparent)] bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.5),transparent_50%)] opacity-20" />
                                     </div>
-                                  </div>
-                                  <div className="h-3 rounded-full bg-muted/30 border border-border/60 relative overflow-hidden">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: p.percent + "%" }}
-                                      transition={{
-                                        type: "spring",
-                                        stiffness: 200,
-                                        damping: 30,
-                                      }}
-                                      className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-emerald-400"
-                                    />
-                                    <div className="pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_right,transparent,black_20%,black_80%,transparent)] bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.5),transparent_50%)] opacity-20" />
-                                  </div>
-                                  <div className="mt-1 text-[11px] text-muted-foreground tabular-nums">
-                                    {p.completed} / {p.total} items
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
+                                    <div className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+                                      {p.completed} / {p.total} items
+                                    </div>
+                                  </motion.div>
+                                );
+                              })
+                            )}
+                          </AnimatePresence>
                         </div>
                       </div>
                     </div>
