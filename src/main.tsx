@@ -19,8 +19,10 @@ import {
   FilePlus,
   Image as ImageIcon,
   Info,
+  Pencil,
 } from "lucide-react";
 import { TrashIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+const aboutIconUrl = new URL("../build/icon.png", import.meta.url).href;
 const AboutContent: React.FC = () => {
   const [info, setInfo] = useState<{
     name: string;
@@ -42,7 +44,7 @@ const AboutContent: React.FC = () => {
 
       <div className="relative z-10 flex items-start gap-4">
         <img
-          src="/build/icon.png"
+          src={aboutIconUrl}
           alt="Open Task Tracker icon"
           className="h-12 w-12 rounded-xl border border-white/10 shadow"
           draggable={false}
@@ -481,6 +483,18 @@ function App() {
     file: { name: string; path: string };
   } | null>(null);
 
+  const [renameDialog, setRenameDialog] = useState<{
+    kind: "task" | "template";
+    file: { name: string; path: string };
+  } | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  // Save-as-template dialog state
+  const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
+  const [saveTemplateInput, setSaveTemplateInput] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
   type EditableDivProps = {
     initial: string;
     multiline: boolean;
@@ -765,6 +779,18 @@ function App() {
   const makeUniqueName = (baseName: string) => {
     const existing = new Set(
       (dailyTaskFiles || []).map((f) => f.name.toLowerCase())
+    );
+    let candidate = baseName;
+    let i = 1;
+    while (existing.has(candidate.toLowerCase())) {
+      candidate = `${baseName} (${i++})`;
+    }
+    return candidate;
+  };
+
+  const makeUniqueTemplateName = (baseName: string) => {
+    const existing = new Set(
+      (templateFiles || []).map((f) => f.name.toLowerCase())
     );
     let candidate = baseName;
     let i = 1;
@@ -1096,6 +1122,84 @@ function App() {
         console.error("Failed to write JSON:", err);
       }
     })();
+  };
+
+  const openSaveTemplateDialog = () => {
+    if (!selectedDoc) return;
+    setSaveTemplateInput(selectedDoc.name || "");
+    setIsSaveTemplateOpen(true);
+  };
+
+  const performSaveTemplate = async () => {
+    if (!selectedFolder || !selectedDoc || !window.api?.writeJsonFile) return;
+    const baseName = sanitizeFileName(
+      saveTemplateInput.trim() || selectedDoc.name || "Template"
+    );
+    if (!baseName) return;
+    setIsSavingTemplate(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const templateDoc: TaskDocument = {
+        type: "template",
+        id: generateId("tmpl"),
+        name: baseName,
+        description: "",
+        templateId: "",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        taskGroups: (selectedDoc.taskGroups || []).map((g) => {
+          const newGroupId = generateId("tg");
+          return {
+            id: newGroupId,
+            name: g.name,
+            templateTaskGroupId: newGroupId,
+            description: g.description ?? "",
+            notes: g.notes ?? "",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            tasks: (g.tasks || []).map((t) => {
+              const newTaskId = generateId("tsk");
+              return {
+                id: newTaskId,
+                name: t.name,
+                templateTaskId: newTaskId,
+                description: t.description ?? "",
+                notes: t.notes ?? null,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+                isComplete: false,
+                recycle: false,
+                subTasks: (t.subTasks || []).map((s) => {
+                  const newSubId = generateId("sub");
+                  return {
+                    id: newSubId,
+                    name: s.name,
+                    description: s.description ?? "",
+                    notes: s.notes ?? null,
+                    isComplete: false,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                    templateSubTaskId: newSubId,
+                  } as SubTask;
+                }),
+              } as TaskItem;
+            }),
+          } as TaskGroup;
+        }),
+      };
+
+      const root = selectedFolder.replace(/[\\/]+$/, "");
+      const unique = makeUniqueTemplateName(baseName);
+      const targetPath = `${root}/templates/${unique}.json`;
+      const ok = await window.api.writeJsonFile(targetPath, templateDoc);
+      if (!ok) return;
+      await refreshTemplates();
+      setIsSaveTemplateOpen(false);
+    } catch (err) {
+      console.error("Failed to save template:", err);
+    } finally {
+      setIsSavingTemplate(false);
+    }
   };
 
   const addTask = (groupId: string) => {
@@ -2032,7 +2136,7 @@ function App() {
                           />
                         </button>
                         {isTasksOpen && (
-                          <div className="flex-1 min-h-0 overflow-auto px-3 pb-3 text-xs text-muted-foreground space-y-1">
+                          <div className="flex-1 min-h-0 overflow-auto px-3 pt-1 pb-3 text-xs text-muted-foreground space-y-1">
                             {dailyTaskFiles.length === 0 ? (
                               <div>No tasks yet</div>
                             ) : (
@@ -2051,20 +2155,37 @@ function App() {
                                       {formatTemplateDate(f.createdAt)}
                                     </div>
                                   </button>
-                                  <button
-                                    className="absolute right-1 top-1 p-1 rounded hover:bg-white/10 opacity-80 group-hover:opacity-100"
-                                    title="Delete"
-                                    aria-label="Delete"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteConfirm({
-                                        kind: "task",
-                                        file: f,
-                                      });
-                                    }}
-                                  >
-                                    <TrashIcon className="h-3.5 w-3.5" />
-                                  </button>
+                                  <div className="absolute right-1 top-1 flex gap-1 opacity-80 group-hover:opacity-100">
+                                    <button
+                                      className="p-1 rounded hover:bg-white/10"
+                                      title="Rename"
+                                      aria-label="Rename"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setRenameDialog({
+                                          kind: "task",
+                                          file: f,
+                                        });
+                                        setRenameInput(f.name);
+                                      }}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      className="p-1 rounded hover:bg-white/10"
+                                      title="Delete"
+                                      aria-label="Delete"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteConfirm({
+                                          kind: "task",
+                                          file: f,
+                                        });
+                                      }}
+                                    >
+                                      <TrashIcon className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                               ))
                             )}
@@ -2087,7 +2208,7 @@ function App() {
                           />
                         </button>
                         {isTemplatesOpen && (
-                          <div className="flex-1 min-h-0 overflow-auto px-3 pb-3 text-xs text-muted-foreground space-y-1">
+                          <div className="flex-1 min-h-0 overflow-auto px-3 pb-3 pt-1 text-xs text-muted-foreground space-y-1">
                             {templateFiles.length === 0 ? (
                               <div className="text-muted-foreground text-xs px-1">
                                 No templates yet
@@ -2110,20 +2231,37 @@ function App() {
                                       {formatTemplateDate(f.createdAt)}
                                     </div>
                                   </button>
-                                  <button
-                                    className="absolute right-1 top-1 p-1 rounded hover:bg-white/10 opacity-80 group-hover:opacity-100"
-                                    title="Delete template"
-                                    aria-label="Delete template"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteConfirm({
-                                        kind: "template",
-                                        file: f,
-                                      });
-                                    }}
-                                  >
-                                    <TrashIcon className="h-3.5 w-3.5" />
-                                  </button>
+                                  <div className="absolute right-1 top-1 flex gap-1 opacity-80 group-hover:opacity-100">
+                                    <button
+                                      className="p-1 rounded hover:bg-white/10"
+                                      title="Rename template"
+                                      aria-label="Rename template"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setRenameDialog({
+                                          kind: "template",
+                                          file: f,
+                                        });
+                                        setRenameInput(f.name);
+                                      }}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      className="p-1 rounded hover:bg-white/10"
+                                      title="Delete template"
+                                      aria-label="Delete template"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteConfirm({
+                                          kind: "template",
+                                          file: f,
+                                        });
+                                      }}
+                                    >
+                                      <TrashIcon className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                               ))
                             )}
@@ -2652,6 +2790,122 @@ function App() {
 
             {createPortal(
               <AnimatePresence>
+                {renameDialog && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    <motion.div
+                      className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                      onClick={() => setRenameDialog(null)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.98, y: 4 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      className="relative z-[101] w-[460px] max-w-[92vw] flex flex-col rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-950/60 via-zinc-900/50 to-black/40 p-4 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] ring-1 ring-white/5 overflow-hidden before:content-[''] before:pointer-events-none before:absolute before:inset-[-1px] before:rounded-2xl before:bg-[radial-gradient(65%_80%_at_85%_5%,_rgba(99,102,241,0.18)_0%,_transparent_60%),radial-gradient(60%_70%_at_10%_0%,_rgba(20,184,166,0.16)_0%,_transparent_55%)] before:opacity-[0.18] before:blur-xl after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-2xl after:bg-[image:radial-gradient(#ffffff_0.5px,_transparent_0)] after:bg-[size:4px_4px] after:bg-repeat after:bg-right after:opacity-[0.03] after:[mask-image:radial-gradient(80%_60%_at_50%_0%,_black,_transparent)]"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-semibold">
+                          Rename{" "}
+                          {renameDialog.kind === "task"
+                            ? "task list"
+                            : "template"}
+                        </h3>
+                        <button
+                          className="p-1 rounded hover:bg-white/5"
+                          onClick={() => setRenameDialog(null)}
+                          aria-label="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-2">
+                        Current name:{" "}
+                        <span className="text-foreground">
+                          {renameDialog.file.name}
+                        </span>
+                      </div>
+                      <label className="block text-xs px-0 mb-1">
+                        New name
+                      </label>
+                      <input
+                        className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-white/20"
+                        value={renameInput}
+                        onChange={(e) => setRenameInput(e.target.value)}
+                        placeholder="Enter a new name"
+                        autoFocus
+                      />
+                      <div className="flex items-center justify-end gap-2 mt-4">
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-white/10 hover:bg-white/5"
+                          onClick={() => setRenameDialog(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-50"
+                          disabled={isRenaming || !renameInput.trim()}
+                          onClick={async () => {
+                            if (!renameDialog) return;
+                            const base = sanitizeFileName(renameInput);
+                            if (!base) return;
+                            try {
+                              setIsRenaming(true);
+                              const res = await (
+                                window as any
+                              ).api?.renameJsonFile?.(
+                                renameDialog.file.path,
+                                base
+                              );
+                              if (!res || !res.ok || !res.newFullPath) {
+                                setIsRenaming(false);
+                                return;
+                              }
+                              // Update the internal document name too
+                              try {
+                                const data = await (
+                                  window as any
+                                ).api?.readJsonFile?.(res.newFullPath);
+                                if (data && typeof data === "object") {
+                                  data.name = base;
+                                  await (window as any).api?.writeJsonFile?.(
+                                    res.newFullPath,
+                                    data
+                                  );
+                                }
+                              } catch {}
+
+                              // Refresh lists and update selection if needed
+                              if (renameDialog.kind === "task") {
+                                await refreshDailyTasks();
+                              } else {
+                                await refreshTemplates();
+                              }
+                              if (selectedPath === renameDialog.file.path) {
+                                setSelectedPath(res.newFullPath);
+                              }
+                              setRenameDialog(null);
+                              setIsRenaming(false);
+                            } catch {
+                              setIsRenaming(false);
+                            }
+                          }}
+                        >
+                          {isRenaming ? "Renaming..." : "Rename"}
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>,
+              document.body
+            )}
+
+            {createPortal(
+              <AnimatePresence>
                 {isBackgroundsOpen && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center">
                     <motion.div
@@ -2759,6 +3013,71 @@ function App() {
               document.body
             )}
 
+            {createPortal(
+              <AnimatePresence>
+                {isSaveTemplateOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    <motion.div
+                      className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                      onClick={() => setIsSaveTemplateOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.98, y: 4 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      className="relative z-[101] w-[460px] max-w-[92vw] flex flex-col rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-950/60 via-zinc-900/50 to-black/40 p-4 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] ring-1 ring-white/5 overflow-hidden before:content-[''] before:pointer-events-none before:absolute before:inset-[-1px] before:rounded-2xl before:bg-[radial-gradient(65%_80%_at_85%_5%,_rgba(59,130,246,0.18)_0%,_transparent_60%),radial-gradient(60%_70%_at_10%_0%,_rgba(16,185,129,0.16)_0%,_transparent_55%)] before:opacity-[0.18] before:blur-xl after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-2xl after:bg-[image:radial-gradient(#ffffff_0.5px,_transparent_0)] after:bg-[size:4px_4px] after:bg-repeat after:bg-right after:opacity-[0.03] after:[mask-image:radial-gradient(80%_60%_at_50%_0%,_black,_transparent)]"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-semibold">
+                          Save as template
+                        </h3>
+                        <button
+                          className="p-1 rounded hover:bg-white/5"
+                          onClick={() => setIsSaveTemplateOpen(false)}
+                          aria-label="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <label className="block text-xs px-0 mb-1">
+                        Template name
+                      </label>
+                      <input
+                        className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-white/20"
+                        value={saveTemplateInput}
+                        onChange={(e) => setSaveTemplateInput(e.target.value)}
+                        placeholder="Enter a template name"
+                        autoFocus
+                      />
+                      <div className="flex items-center justify-end gap-2 mt-4">
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-white/10 hover:bg-white/5"
+                          onClick={() => setIsSaveTemplateOpen(false)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-50"
+                          disabled={
+                            isSavingTemplate || !saveTemplateInput.trim()
+                          }
+                          onClick={performSaveTemplate}
+                        >
+                          {isSavingTemplate ? "Creating..." : "Create"}
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>,
+              document.body
+            )}
+
             {/* Two equal panels taking remaining width */}
             <div className="flex-1 h-full  overflow-hidden p-3">
               <div className="relative w-full h-full rounded-xl border border-border bg-secondary/10 backdrop-blur-md overflow-hidden">
@@ -2770,6 +3089,19 @@ function App() {
                       </h2>
                       {selectedDoc && (
                         <div className="flex items-center gap-2">
+                          <button
+                            className="inline-flex items-center gap-2 h-8 rounded-md px-3 text-xs font-medium border border-white/10 bg-gradient-to-r from-fuchsia-500/15 via-purple-500/15 to-blue-500/15 hover:from-fuchsia-500/25 hover:via-purple-500/25 hover:to-blue-500/25 transition-colors relative overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.06)_inset] after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]"
+                            title="Save as template"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              openSaveTemplateDialog();
+                            }}
+                          >
+                            <FilePlus className="h-3.5 w-3.5 relative z-10" />
+                            <span className="relative z-10">
+                              Save as template
+                            </span>
+                          </button>
                           <button
                             className="inline-flex items-center gap-2 h-8 rounded-md px-3 text-xs font-medium border border-white/10 bg-gradient-to-r from-emerald-500/15 via-cyan-500/15 to-blue-500/15 hover:from-emerald-500/25 hover:via-cyan-500/25 hover:to-blue-500/25 transition-colors relative overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.06)_inset] after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]"
                             title="Add group"
@@ -3423,7 +3755,7 @@ function App() {
                                           openTaskIds[task.id] && (
                                             <div className="relative px-3 pb-2 space-y-1 pl-8">
                                               <div
-                                                className="pointer-events-none absolute left-[1.375rem] bottom-12 border-l  border-white/50"
+                                                className="pointer-events-none absolute left-[1.375rem] bottom-2 border-l  border-white/50"
                                                 style={{
                                                   top: -(
                                                     BASE_CONNECTOR_OVERLAP_PX +

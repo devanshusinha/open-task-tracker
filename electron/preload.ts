@@ -62,5 +62,14 @@
     deleteJsonFile: async (fullPath: string): Promise<boolean> => {
       return ipcRenderer.invoke("delete-json-file", fullPath);
     },
+    renameJsonFile: async (
+      oldFullPath: string,
+      newBaseName: string
+    ): Promise<{ ok: boolean; newFullPath?: string } | false> => {
+      return ipcRenderer.invoke("rename-json-file", {
+        oldFullPath,
+        newBaseName,
+      });
+    },
   });
 })();

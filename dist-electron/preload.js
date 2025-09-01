@@ -16,7 +16,10 @@
     writeRootSettings: async (n) => e.invoke("write-root-settings", n),
     readJsonFile: async (n) => e.invoke("read-json-file", n),
     writeJsonFile: async (n, t) => e.invoke("write-json-file", { fullPath: n, data: t }),
-    deleteJsonFile: async (n) => e.invoke("delete-json-file", n)
+    deleteJsonFile: async (n) => e.invoke("delete-json-file", n),
+    renameJsonFile: async (n, t) => e.invoke("rename-json-file", {
+      oldFullPath: n,
+      newBaseName: t
+    })
   });
 })();
-//# sourceMappingURL=preload.js.map

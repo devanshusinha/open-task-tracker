@@ -498,3 +498,57 @@ ipcMain.handle("delete-json-file", async (_evt, fullPath: string) => {
     return false;
   }
 });
+
+// Rename a JSON file within the selected root (safe, same directory)
+ipcMain.handle(
+  "rename-json-file",
+  async (
+    _evt,
+    args: { oldFullPath: string; newBaseName: string } | undefined
+  ): Promise<{ ok: boolean; newFullPath?: string } | false> => {
+    try {
+      if (!args) return false;
+      const { oldFullPath, newBaseName } = args;
+      const settings = readAppSettings();
+      const rootFolder = settings.selectedFolder;
+      if (!rootFolder) return false;
+
+      const resolvedOld = path.resolve(oldFullPath);
+      const resolvedRoot = path.resolve(rootFolder);
+      if (!resolvedOld.startsWith(resolvedRoot)) return false;
+      if (!resolvedOld.toLowerCase().endsWith(".json")) return false;
+
+      const dir = path.dirname(resolvedOld);
+      // Basic sanitize for filename safety
+      const safeBase = newBaseName
+        .trim()
+        .replace(/[\\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, " ")
+        .slice(0, 120);
+      if (!safeBase) return false;
+      const target = path.join(dir, `${safeBase}.json`);
+
+      // If name unchanged, short-circuit success
+      if (
+        path.basename(resolvedOld).toLowerCase() ===
+        `${safeBase}.json`.toLowerCase()
+      ) {
+        return { ok: true, newFullPath: resolvedOld };
+      }
+
+      // Ensure we don't overwrite existing file
+      try {
+        await fs.promises.access(target, fs.constants.F_OK);
+        // Target exists; fail gracefully
+        return { ok: false };
+      } catch {
+        // not exists, proceed
+      }
+
+      await fs.promises.rename(resolvedOld, target);
+      return { ok: true, newFullPath: target };
+    } catch {
+      return false;
+    }
+  }
+);

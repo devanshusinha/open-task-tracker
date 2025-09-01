@@ -4,6 +4,7 @@ import electron from "vite-plugin-electron";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig(({ mode }) => ({
+  base: mode === "development" ? "/" : "./",
   plugins: [
     react(),
     tailwindcss(),
@@ -20,7 +21,7 @@ export default defineConfig(({ mode }) => ({
         vite: {
           build: {
             outDir: "dist-electron",
-            sourcemap: true,
+            sourcemap: mode === "development",
           },
         },
       },
@@ -29,7 +30,7 @@ export default defineConfig(({ mode }) => ({
         vite: {
           build: {
             outDir: "dist-electron",
-            sourcemap: true,
+            sourcemap: mode === "development",
             rollupOptions: {
               output: {
                 format: "cjs", // Preload must be CommonJS
@@ -42,7 +43,7 @@ export default defineConfig(({ mode }) => ({
   ],
   build: {
     outDir: "dist",
-    sourcemap: true,
+    sourcemap: mode === "development",
   },
   server: {
     port: 5173,
