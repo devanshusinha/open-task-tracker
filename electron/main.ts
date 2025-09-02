@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,17 @@ function createMainWindow() {
       mainWindow.webContents.openDevTools({ mode: "detach" });
     } catch {}
   }
+
+  // Ensure links with target="_blank" open in the user's default browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        shell.openExternal(url);
+        return { action: "deny" };
+      }
+    } catch {}
+    return { action: "deny" };
+  });
 
   // Enable titlebar overlay so the window controls render above the webview
   if (process.platform === "darwin") {

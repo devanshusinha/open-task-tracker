@@ -1,4 +1,10 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import "./styles.css";
@@ -20,9 +26,21 @@ import {
   Image as ImageIcon,
   Info,
   Pencil,
+  Palette,
 } from "lucide-react";
 import { TrashIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+import {
+  LineChart as ReLineChart,
+  Line as ReLine,
+  XAxis as ReXAxis,
+  YAxis as ReYAxis,
+  CartesianGrid as ReCartesianGrid,
+  Tooltip as ReTooltip,
+  ResponsiveContainer as ReResponsiveContainer,
+} from "recharts";
 const aboutIconUrl = new URL("../build/icon.png", import.meta.url).href;
+const coffeeButtonUrl = new URL("../build/coffee_button.png", import.meta.url)
+  .href;
 const AboutContent: React.FC = () => {
   const [info, setInfo] = useState<{
     name: string;
@@ -63,7 +81,23 @@ const AboutContent: React.FC = () => {
       </div>
 
       <div className="mt-4 text-sm leading-relaxed text-foreground/90">
-        A fully open source task tracker
+        A fully open source, 100% local task tracker.
+      </div>
+
+      <div className="mt-4">
+        <a
+          href="https://buymeacoffee.com/devanshusinha"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Buy me a coffee"
+        >
+          <img
+            src={coffeeButtonUrl}
+            alt=""
+            draggable={false}
+            className="h-8 w-40 rounded-lg  border border-white/10 bg-white shadow object-contain"
+          />
+        </a>
       </div>
 
       <div className="mt-4 text-[11px] text-muted-foreground">
@@ -126,6 +160,8 @@ type TaskGroup = {
   templateTaskGroupId: string;
   description: string;
   notes: string;
+  // Optional CSS gradient string persisted in JSON to render left glow
+  color?: string | null;
   createdAt: string;
   updatedAt: string;
   tasks: TaskItem[];
@@ -334,6 +370,41 @@ function App() {
   const [hoveredHeatmapDate, setHoveredHeatmapDate] = useState<string | null>(
     null
   );
+  const [progressChartView, setProgressChartView] = useState<
+    "heatmap" | "linechart"
+  >("heatmap");
+  const [isChartPrefLoaded, setIsChartPrefLoaded] = useState<boolean>(false);
+  const [progressRecycleOnly, setProgressRecycleOnly] =
+    useState<boolean>(false);
+
+  // Persist and restore chart view preference from root settings.json
+  useEffect(() => {
+    const loadChartPreference = async () => {
+      try {
+        const settings = (await (window as any)?.api?.readRootSettings?.()) as
+          | Record<string, unknown>
+          | undefined;
+        const view =
+          (settings?.progressChartView as "heatmap" | "linechart") || "heatmap";
+        if (view === "heatmap" || view === "linechart")
+          setProgressChartView(view);
+      } catch {}
+      setIsChartPrefLoaded(true);
+    };
+    loadChartPreference();
+  }, [selectedFolder]);
+
+  useEffect(() => {
+    if (!selectedFolder || !isChartPrefLoaded) return;
+    try {
+      (window as any)?.api?.writeRootSettings?.({
+        progressChartView,
+      });
+    } catch {}
+  }, [progressChartView, selectedFolder, isChartPrefLoaded]);
+  const [hoveredLinechartLabel, setHoveredLinechartLabel] = useState<
+    string | null
+  >(null);
   const [selectedKind, setSelectedKind] = useState<"task" | "template" | null>(
     null
   );
@@ -347,6 +418,30 @@ function App() {
   const [openSubtaskNotesIds, setOpenSubtaskNotesIds] = useState<
     Record<string, boolean>
   >({});
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const filteredGroups = useMemo(() => {
+    if (!selectedDoc) return [] as TaskGroup[];
+    return filterTaskDocumentByQuery(selectedDoc, searchQuery);
+  }, [selectedDoc, searchQuery]);
+  useEffect(() => {
+    if (!searchQuery) return;
+    // Auto-expand groups/tasks that have matches so structure is visible
+    const groups = filteredGroups;
+    setOpenGroupIds((prev) => {
+      const next = { ...prev };
+      for (const g of groups) next[g.id] = true;
+      return next;
+    });
+    setOpenTaskIds((prev) => {
+      const next = { ...prev };
+      for (const g of groups) {
+        for (const t of g.tasks || []) {
+          if ((t.subTasks || []).length > 0) next[t.id] = true;
+        }
+      }
+      return next;
+    });
+  }, [searchQuery, filteredGroups]);
   const [taskNotesHeights, setTaskNotesHeights] = useState<
     Record<string, number>
   >({});
@@ -469,6 +564,36 @@ function App() {
       requestAnimationFrame(focusLater);
     });
   }, [editing]);
+
+  // Add per-editor blur handler for save-on-click-outside
+  useEffect(() => {
+    if (!editing) return;
+    const key =
+      editing.kind === "task"
+        ? `${editing.groupId}:${editing.taskId}:${editing.field}`
+        : editing.kind === "subtask"
+          ? `${editing.groupId}:${editing.taskId}:${(editing as any).subTaskId}:${(editing as any).field}`
+          : `${editing.groupId}:${editing.field}`;
+
+    const editorEl = document.querySelector(
+      `[data-editor-key="${key}"]`
+    ) as HTMLDivElement | null;
+    if (!editorEl) return;
+
+    const handleBlur = () => {
+      if (skipBlurSaveRef.current) {
+        skipBlurSaveRef.current = false;
+        return;
+      }
+      const value = editorEl.innerText ?? "";
+      saveEdit(value);
+    };
+
+    editorEl.addEventListener("blur", handleBlur);
+    return () => {
+      editorEl.removeEventListener("blur", handleBlur);
+    };
+  }, [editing]);
   const [shimmerOnceKeys, setShimmerOnceKeys] = useState<
     Record<string, boolean>
   >({});
@@ -477,6 +602,7 @@ function App() {
   >({});
   const prevGroupPercentRef = useRef<Record<string, number>>({});
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const skipBlurSaveRef = useRef(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
     kind: "task" | "template";
@@ -494,6 +620,46 @@ function App() {
   const [isSaveTemplateOpen, setIsSaveTemplateOpen] = useState(false);
   const [saveTemplateInput, setSaveTemplateInput] = useState("");
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  // Group color picker state
+  const [groupColorDialog, setGroupColorDialog] = useState<{
+    groupId: string;
+  } | null>(null);
+  const [selectedGradient, setSelectedGradient] = useState<string | null>(null);
+
+  const openGroupColorPicker = (groupId: string) => {
+    setGroupColorDialog({ groupId });
+    const current = selectedDoc?.taskGroups?.find(
+      (g) => g.id === groupId
+    )?.color;
+    setSelectedGradient(current ?? null);
+  };
+
+  const applyGroupColor = async () => {
+    if (!groupColorDialog || !selectedDoc || !selectedPath) return;
+    const { groupId } = groupColorDialog;
+    const nowIso = new Date().toISOString();
+    const next: TaskDocument = {
+      ...selectedDoc,
+      updatedAt: nowIso,
+      taskGroups: (selectedDoc.taskGroups || []).map((g) =>
+        g.id === groupId
+          ? ({
+              ...g,
+              color: selectedGradient ?? null,
+              updatedAt: nowIso,
+            } as TaskGroup)
+          : g
+      ),
+    };
+    setSelectedDoc(next);
+    setGroupColorDialog(null);
+    try {
+      await window.api?.writeJsonFile?.(selectedPath, next);
+    } catch (err) {
+      console.error("Failed to write JSON:", err);
+    }
+  };
 
   type EditableDivProps = {
     initial: string;
@@ -627,6 +793,26 @@ function App() {
     if (selectedFolder) {
       loadDailyTasks();
       loadTemplates();
+      // Restore last opened task if available
+      (async () => {
+        try {
+          const settings = (await (
+            window as any
+          )?.api?.readRootSettings?.()) as Record<string, unknown> | undefined;
+          const rel = (settings?.lastOpenedTaskRelPath as string) || null;
+          if (rel) {
+            const root = selectedFolder.replace(/[\\/]+$/, "");
+            const full = `${root}/${rel}`;
+            // Confirm file still exists by trying to read it
+            const data = await (window as any)?.api?.readJsonFile?.(full);
+            if (data) {
+              setSelectedKind("task");
+              setSelectedPath(full);
+              setSelectedDoc(data);
+            }
+          }
+        } catch {}
+      })();
     } else {
       setDailyTaskFiles([]);
       setTemplateFiles([]);
@@ -638,7 +824,7 @@ function App() {
   // Aggregate per-day progress across all daily task files
   useEffect(() => {
     recomputeDailyProgress();
-  }, [dailyTaskFiles]);
+  }, [dailyTaskFiles, progressRecycleOnly]);
 
   useEffect(() => {
     const readDoc = async () => {
@@ -677,6 +863,17 @@ function App() {
   ) => {
     setSelectedKind(kind);
     setSelectedPath(file.path);
+    try {
+      if (kind === "task") {
+        const root = selectedFolder?.replace(/[\\/]+$/, "");
+        if (root && file.path.startsWith(root)) {
+          const rel = file.path.slice(root.length + 1);
+          (window as any)?.api?.writeRootSettings?.({
+            lastOpenedTaskRelPath: rel,
+          });
+        }
+      }
+    } catch {}
   };
 
   const refreshDailyTasks = async () => {
@@ -870,6 +1067,7 @@ function App() {
           templateTaskGroupId: (g as any).templateTaskGroupId ?? (g as any).id,
           description: g.description ?? "",
           notes: g.notes ?? "",
+          color: (g as any).color ?? null,
           createdAt: nowIso,
           updatedAt: nowIso,
           tasks: (g.tasks || []).map((t) => ({
@@ -991,6 +1189,7 @@ function App() {
               (g as any).templateTaskGroupId ?? (g as any).id,
             description: g.description ?? "",
             notes: g.notes ?? "",
+            color: (g as any).color ?? null,
             createdAt: nowIso,
             updatedAt: nowIso,
             tasks,
@@ -1104,6 +1303,7 @@ function App() {
       templateTaskGroupId: generateId("ttg"),
       description: "",
       notes: "",
+      color: null,
       createdAt: nowIso,
       updatedAt: nowIso,
       tasks: [],
@@ -1155,6 +1355,7 @@ function App() {
             templateTaskGroupId: newGroupId,
             description: g.description ?? "",
             notes: g.notes ?? "",
+            color: (g as any).color ?? null,
             createdAt: nowIso,
             updatedAt: nowIso,
             tasks: (g.tasks || []).map((t) => {
@@ -1309,6 +1510,8 @@ function App() {
   };
 
   const cancelEdit = () => {
+    // Guard: indicate an intentional cancel so blur doesn't save
+    skipBlurSaveRef.current = true;
     setEditing(null);
     setEditValue("");
     try {
@@ -1586,6 +1789,26 @@ function App() {
     return { total, completed };
   };
 
+  // For progress charts: optionally consider only tasks with recycle=true
+  const computeDocumentTotalsForCharts = (
+    doc: TaskDocument,
+    recycleOnly: boolean
+  ) => {
+    let total = 0;
+    let completed = 0;
+    for (const group of doc.taskGroups || []) {
+      for (const task of group.tasks || []) {
+        if (recycleOnly && task.recycle !== true) continue;
+        total += 1;
+        if (task.isComplete) completed += 1;
+        const subs = task.subTasks || [];
+        total += subs.length;
+        completed += subs.filter((s) => !!s.isComplete).length;
+      }
+    }
+    return { total, completed };
+  };
+
   function SmallCircularProgress({ percent }: { percent: number }) {
     const size = 36; // px (larger to avoid text overlap)
     const strokeWidth = 4; // px
@@ -1679,29 +1902,66 @@ function App() {
   }
 
   const getHeatCellClass = (percent: number, hasData: boolean) => {
+    // GitHub-like scale: 0 = gray, then 4 shades of green
     if (!hasData || percent === 0) {
-      return "bg-gradient-to-br from-zinc-800 via-zinc-700 to-zinc-600";
+      return "bg-zinc-800";
     }
-    if (percent <= 15) {
-      return "bg-gradient-to-br from-slate-800 via-indigo-900 to-indigo-800";
+    if (percent <= 25) {
+      return "bg-emerald-900";
     }
-    if (percent <= 30) {
-      return "bg-gradient-to-br from-indigo-800 via-violet-800 to-fuchsia-800";
-    }
-    if (percent <= 45) {
-      return "bg-gradient-to-br from-fuchsia-700 via-pink-700 to-rose-700";
-    }
-    if (percent <= 60) {
-      return "bg-gradient-to-br from-orange-700 via-amber-600 to-yellow-500";
+    if (percent <= 50) {
+      return "bg-emerald-700";
     }
     if (percent <= 75) {
-      return "bg-gradient-to-br from-lime-700 via-emerald-700 to-teal-700";
+      return "bg-emerald-600";
     }
-    if (percent <= 90) {
-      return "bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-600";
-    }
-    return "bg-gradient-to-br from-cyan-500 via-emerald-500 to-lime-400";
+    return "bg-emerald-400";
   };
+
+  function filterTaskDocumentByQuery(
+    doc: TaskDocument,
+    query: string
+  ): TaskGroup[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return doc.taskGroups || [];
+    const includes = (value?: string | null) =>
+      (value || "").toLowerCase().includes(q);
+    const groups: TaskGroup[] = [];
+    for (const group of doc.taskGroups || []) {
+      const groupMatches =
+        includes(group.name) ||
+        includes(group.description) ||
+        includes(group.notes);
+      if (groupMatches) {
+        groups.push(group);
+        continue;
+      }
+      const nextTasks: TaskItem[] = [];
+      for (const task of group.tasks || []) {
+        const taskMatches =
+          includes(task.name) ||
+          includes(task.description) ||
+          includes(task.notes as any);
+        if (taskMatches) {
+          nextTasks.push(task);
+          continue;
+        }
+        const matchingSubs: SubTask[] = (task.subTasks || []).filter(
+          (s) =>
+            includes(s.name) ||
+            includes(s.description) ||
+            includes(s.notes as any)
+        );
+        if (matchingSubs.length > 0) {
+          nextTasks.push({ ...task, subTasks: matchingSubs });
+        }
+      }
+      if (nextTasks.length > 0) {
+        groups.push({ ...group, tasks: nextTasks });
+      }
+    }
+    return groups;
+  }
 
   const recomputeDailyProgress = async () => {
     if (!window.api?.readJsonFile) {
@@ -1726,7 +1986,10 @@ function App() {
                 ? new Date().toISOString().slice(0, 10)
                 : d.toISOString().slice(0, 10);
             }
-            const { total, completed } = computeDocumentTotals(doc);
+            const { total, completed } = computeDocumentTotalsForCharts(
+              doc,
+              progressRecycleOnly
+            );
             return { dayKey, total, completed };
           } catch (e) {
             console.warn("Skip file during recompute due to error:", f.path, e);
@@ -2978,6 +3241,116 @@ function App() {
 
             {createPortal(
               <AnimatePresence>
+                {groupColorDialog && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    <motion.div
+                      className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                      onClick={() => setGroupColorDialog(null)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.98, y: 4 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      className="relative z-[101] w-[520px] max-w-[92vw] flex flex-col rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-950/60 via-zinc-900/50 to-black/40 p-4 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] ring-1 ring-white/5 overflow-hidden before:content-[''] before:pointer-events-none before:absolute before:inset-[-1px] before:rounded-2xl before:bg-[radial-gradient(65%_80%_at_85%_5%,_rgba(59,130,246,0.18)_0%,_transparent_60%),radial-gradient(60%_70%_at_10%_0%,_rgba(16,185,129,0.16)_0%,_transparent_55%)] before:opacity-[0.18] before:blur-xl after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-2xl after:bg-[image:radial-gradient(#ffffff_0.5px,_transparent_0)] after:bg-[size:4px_4px] after:bg-repeat after:bg-right after:opacity-[0.03] after:[mask-image:radial-gradient(80%_60%_at_50%_0%,_black,_transparent)]"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-semibold">
+                          Choose group color
+                        </h3>
+                        <button
+                          className="p-1 rounded hover:bg-white/5"
+                          onClick={() => setGroupColorDialog(null)}
+                          aria-label="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-3">
+                        Pick a beautiful gradient. It will render as a subtle
+                        glowing left border on this group.
+                      </div>
+                      <div className="flex gap-2 flex-wrap place-items-center">
+                        {[
+                          // 16 highly distinct bright solid dark->light gradients
+                          "linear-gradient(180deg, #b91c1c 0%, #fca5a5 100%)", // red
+                          "linear-gradient(180deg, #c2410c 0%, #fdba74 100%)", // orange
+                          "linear-gradient(180deg, #b45309 0%, #fcd34d 100%)", // amber
+                          "linear-gradient(180deg, #a16207 0%, #fde68a 100%)", // yellow
+                          "linear-gradient(180deg, #3f6212 0%, #d9f99d 100%)", // lime
+                          "linear-gradient(180deg, #166534 0%, #86efac 100%)", // green
+                          "linear-gradient(180deg, #065f46 0%, #6ee7b7 100%)", // emerald
+                          "linear-gradient(180deg, #0f766e 0%, #99f6e4 100%)", // teal
+                          "linear-gradient(180deg, #0e7490 0%, #67e8f9 100%)", // cyan
+                          "linear-gradient(180deg, #0369a1 0%, #bae6fd 100%)", // sky
+                          "linear-gradient(180deg, #1d4ed8 0%, #93c5fd 100%)", // blue
+                          "linear-gradient(180deg, #3730a3 0%, #c7d2fe 100%)", // indigo
+                          "linear-gradient(180deg, #6d28d9 0%, #d8b4fe 100%)", // violet
+                          "linear-gradient(180deg, #7c3aed 0%, #e9d5ff 100%)", // purple
+                          "linear-gradient(180deg, #a21caf 0%, #f5d0fe 100%)", // fuchsia
+                          "linear-gradient(180deg, #be123c 0%, #fecdd3 100%)", // rose
+                        ].map((grad) => (
+                          <button
+                            key={grad}
+                            className={`relative rounded-sm shrink-0 overflow-hidden w-8 h-8 transition-shadow hover:ring-2 hover:ring-green-500 ${
+                              selectedGradient === grad
+                                ? "ring-2 ring-white/70"
+                                : ""
+                            }`}
+                            style={{
+                              backgroundImage: grad,
+                              filter:
+                                "drop-shadow(0 6px 18px rgba(0,0,0,0.35))",
+                            }}
+                            onClick={() => setSelectedGradient(grad)}
+                            aria-label="Choose gradient"
+                          >
+                            {/* square preview */}
+                          </button>
+                        ))}
+                        <button
+                          key="no-color"
+                          className={`relative rounded-sm shrink-0 overflow-hidden w-8 h-8 transition-shadow hover:ring-2 hover:ring-green-500 ${
+                            selectedGradient === null
+                              ? "ring-2 ring-white/70"
+                              : ""
+                          }`}
+                          onClick={() => setSelectedGradient(null)}
+                          aria-label="Clear color"
+                          style={{
+                            backgroundImage:
+                              "linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.16) 100%)",
+                            filter: "drop-shadow(0 6px 18px rgba(0,0,0,0.35))",
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[140%] h-[2px] bg-white/70 rotate-45"
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 mt-4">
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-white/10 hover:bg-white/5"
+                          onClick={() => setGroupColorDialog(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="text-xs px-3 py-1 rounded border border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-50"
+                          disabled={false}
+                          onClick={applyGroupColor}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
                 {isAboutOpen && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center">
                     <motion.div
@@ -3089,6 +3462,15 @@ function App() {
                       </h2>
                       {selectedDoc && (
                         <div className="flex items-center gap-2">
+                          <div className="relative">
+                            <input
+                              type="text"
+                              placeholder="Search..."
+                              className="h-8 w-48 rounded-md px-2 text-xs bg-white/5 border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                          </div>
                           <button
                             className="inline-flex items-center gap-2 h-8 rounded-md px-3 text-xs font-medium border border-white/10 bg-gradient-to-r from-fuchsia-500/15 via-purple-500/15 to-blue-500/15 hover:from-fuchsia-500/25 hover:via-purple-500/25 hover:to-blue-500/25 transition-colors relative overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.06)_inset] after:content-[''] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-[image:radial-gradient(#ffffff_1px,_transparent_0)] after:bg-[size:6px_6px] after:bg-repeat after:bg-right after:opacity-10 after:[mask-image:linear-gradient(to_left,black,transparent)]"
                             title="Save as template"
@@ -3120,7 +3502,7 @@ function App() {
                       )}
                     </div>
                     <div className="p-4 text-sm space-y-3 overflow-auto h-[calc(100%-48px)]">
-                      <AnimatePresence mode="wait">
+                      <AnimatePresence initial={false} mode="popLayout">
                         {!selectedDoc ? (
                           <motion.div
                             key="no-doc"
@@ -3133,16 +3515,40 @@ function App() {
                             Select a task or template from the sidebar
                           </motion.div>
                         ) : (
-                          (selectedDoc.taskGroups || []).map((group) => (
+                          (searchQuery
+                            ? filteredGroups
+                            : selectedDoc.taskGroups || []
+                          ).map((group) => (
                             <motion.div
                               key={group.id}
+                              layout="position"
                               initial={{ opacity: 0, y: 8 }}
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -8 }}
-                              transition={{ duration: 0.2 }}
-                              className="rounded-md border border-white/10 bg-white/[0.03] backdrop-blur-md"
+                              transition={{
+                                duration: 0.2,
+                                layout: {
+                                  type: "spring",
+                                  stiffness: 420,
+                                  damping: 32,
+                                },
+                              }}
+                              className={`rounded-md border border-white/10 bg-white/[0.03] backdrop-blur-md ${
+                                group.color ? "group-left-glow" : ""
+                              }`}
+                              style={
+                                group.color
+                                  ? ({
+                                      position: "relative",
+                                      boxShadow:
+                                        "inset 0 0 0 1px rgba(255,255,255,0.06)",
+                                      // Expose CSS var used by ::before to paint gradient
+                                      ["--group-gradient" as any]: group.color,
+                                    } as React.CSSProperties)
+                                  : undefined
+                              }
                             >
-                              <div className="flex items-center gap-2 px-3 h-9">
+                              <div className="relative flex items-center gap-2 px-3 h-9">
                                 <div className="inline-flex items-center gap-2">
                                   <button
                                     className="p-1 rounded hover:bg-white/5"
@@ -3162,6 +3568,18 @@ function App() {
                                     <ChevronDown
                                       className={`h-4 w-4 transition-transform ${openGroupIds[group.id] ? "-rotate-180" : "rotate-0"}`}
                                     />
+                                  </button>
+                                  <button
+                                    className="p-1 rounded hover:bg-white/5"
+                                    title="Set group color"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      openGroupColorPicker(group.id);
+                                    }}
+                                    aria-label="Set group color"
+                                  >
+                                    <Palette className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                                   </button>
                                   <span className="font-medium whitespace-pre-wrap break-words">
                                     {editing &&
@@ -3263,7 +3681,10 @@ function App() {
                               {openGroupIds[group.id] && (
                                 <div className="px-3 pb-3 space-y-2">
                                   {group.tasks?.length ? (
-                                    group.tasks.map((task) => (
+                                    (searchQuery
+                                      ? group.tasks
+                                      : group.tasks
+                                    ).map((task) => (
                                       <div
                                         key={task.id}
                                         className="relative overflow-hidden rounded border border-sidebar-border/40"
@@ -3767,7 +4188,10 @@ function App() {
                                                   ),
                                                 }}
                                               ></div>
-                                              {task.subTasks.map((s) => (
+                                              {(searchQuery
+                                                ? task.subTasks
+                                                : task.subTasks
+                                              ).map((s) => (
                                                 <div
                                                   key={s.id}
                                                   className="relative flex items-start gap-2 px-2 py-1 text-xs rounded hover:bg-sidebar-accent/20"
@@ -4421,17 +4845,52 @@ function App() {
                       </div>
                       <div className="h-1/4 border-b border-border shrink-0">
                         <div className="h-12 border-b border-border px-4 flex items-center justify-between">
-                          <h2 className="text-sm font-medium">Heatmap</h2>
-                          <div className="text-xs text-muted-foreground tabular-nums">
-                            {hoveredHeatmapDate ?? ""}
+                          <div className="flex items-center gap-2">
+                            <select
+                              id="progressChartView"
+                              className="text-xs bg-transparent border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-white/20"
+                              value={progressChartView}
+                              onChange={(e) =>
+                                setProgressChartView(
+                                  e.target.value as "heatmap" | "linechart"
+                                )
+                              }
+                              aria-label="Select progress chart view"
+                            >
+                              <option value="heatmap">Heatmap</option>
+                              <option value="linechart">Line chart</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-1 text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="h-3.5 w-3.5 rounded border border-border bg-transparent cursor-pointer"
+                                checked={progressRecycleOnly}
+                                onChange={(e) =>
+                                  setProgressRecycleOnly(e.target.checked)
+                                }
+                                aria-label="Show recycled tasks only"
+                              />
+                              <span className="text-muted-foreground">
+                                Show only repeating tasks
+                              </span>
+                            </label>
+                            <div className="text-xs text-muted-foreground tabular-nums">
+                              {progressChartView === "heatmap"
+                                ? (hoveredHeatmapDate ?? "")
+                                : (hoveredLinechartLabel ?? "")}
+                            </div>
                           </div>
                         </div>
-                        <div className="p-4 text-sm h-[calc(100%-48px)] overflow-auto">
+                        <div
+                          className={`${progressChartView === "linechart" ? "px-0 py-0 overflow-hidden" : "p-4 overflow-auto"} text-sm h-[calc(100%-58px)]`}
+                        >
                           {dailyProgress.length === 0 ? (
                             <div className="text-muted-foreground">
                               No daily data
                             </div>
-                          ) : (
+                          ) : progressChartView === "heatmap" ? (
                             <div className="flex gap-2 flex-wrap">
                               {dailyProgress.map((d) => (
                                 <div key={d.date} className="group">
@@ -4449,6 +4908,113 @@ function App() {
                                 </div>
                               ))}
                             </div>
+                          ) : (
+                            (() => {
+                              const last30 = dailyProgress.slice(-30);
+                              return (
+                                <div className="w-full h-full">
+                                  <ReResponsiveContainer
+                                    width="100%"
+                                    height="100%"
+                                  >
+                                    <ReLineChart
+                                      data={last30}
+                                      margin={{
+                                        top: 8,
+                                        right: 16,
+                                        bottom: 0,
+                                        left: 16,
+                                      }}
+                                      onMouseMove={(state: any) => {
+                                        const label = state?.activeLabel;
+                                        const value =
+                                          state?.activePayload?.[0]?.value;
+                                        if (label != null && value != null) {
+                                          setHoveredLinechartLabel(
+                                            `${label}: ${value}%`
+                                          );
+                                        }
+                                      }}
+                                      onMouseLeave={() =>
+                                        setHoveredLinechartLabel(null)
+                                      }
+                                    >
+                                      <defs>
+                                        <linearGradient
+                                          id="lineGrad"
+                                          x1="0%"
+                                          x2="100%"
+                                          y1="0%"
+                                          y2="0%"
+                                        >
+                                          <stop
+                                            offset="0%"
+                                            stopColor="#8b5cf6"
+                                          />
+                                          <stop
+                                            offset="50%"
+                                            stopColor="#f472b6"
+                                          />
+                                          <stop
+                                            offset="100%"
+                                            stopColor="#34d399"
+                                          />
+                                        </linearGradient>
+                                      </defs>
+                                      <ReCartesianGrid
+                                        stroke="rgba(255,255,255,0.08)"
+                                        strokeDasharray="4 4"
+                                        vertical={false}
+                                      />
+                                      <ReXAxis
+                                        dataKey="date"
+                                        hide
+                                        axisLine={false}
+                                        tickLine={false}
+                                      />
+                                      <ReYAxis
+                                        domain={[0, 100]}
+                                        ticks={[0, 25, 50, 75, 100]}
+                                        tick={{
+                                          fill: "var(--muted-foreground, #9CA3AF)",
+                                          fontSize: 10,
+                                        }}
+                                        stroke="rgba(255,255,255,0.12)"
+                                        tickFormatter={(v: number) => `${v}%`}
+                                      />
+                                      <ReTooltip
+                                        contentStyle={{
+                                          backgroundColor: "rgba(17,24,39,0.9)",
+                                          border:
+                                            "1px solid rgba(255,255,255,0.12)",
+                                          borderRadius: 6,
+                                        }}
+                                        labelStyle={{ color: "#E5E7EB" }}
+                                        itemStyle={{ color: "#E5E7EB" }}
+                                        formatter={(value: any) => [
+                                          `${value}%`,
+                                          "Completion",
+                                        ]}
+                                        labelFormatter={(label: any) => label}
+                                      />
+                                      <ReLine
+                                        type="monotone"
+                                        dataKey="percent"
+                                        stroke="url(#lineGrad)"
+                                        strokeWidth={2}
+                                        dot={{
+                                          r: 3,
+                                          fill: "#fff",
+                                          strokeWidth: 0,
+                                        }}
+                                        activeDot={{ r: 4 }}
+                                        isAnimationActive
+                                      />
+                                    </ReLineChart>
+                                  </ReResponsiveContainer>
+                                </div>
+                              );
+                            })()
                           )}
                         </div>
                       </div>

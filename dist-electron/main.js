@@ -1,8 +1,8 @@
-import { app as m, Menu as y, ipcMain as u, BrowserWindow as v, dialog as S } from "electron";
+import { app as m, Menu as y, ipcMain as u, BrowserWindow as v, shell as S, dialog as P } from "electron";
 import t from "node:path";
 import i from "node:fs";
-import { fileURLToPath as P } from "node:url";
-const w = t.dirname(P(import.meta.url));
+import { fileURLToPath as O } from "node:url";
+const w = t.dirname(O(import.meta.url));
 let d = null;
 function F() {
   const s = t.join(process.cwd(), "build", "icon.png"), e = process.platform === "win32" || process.platform === "linux" ? s : void 0;
@@ -25,8 +25,8 @@ function F() {
       preload: (() => {
         if (m.isPackaged)
           return t.join(w, "preload.js");
-        const o = t.join(w, "../dist-electron/preload.js"), a = t.join(w, "preload.js");
-        return i.existsSync(o) ? o : a;
+        const r = t.join(w, "../dist-electron/preload.js"), a = t.join(w, "preload.js");
+        return i.existsSync(r) ? r : a;
       })()
     }
   }), process.platform === "darwin" && !m.isPackaged)
@@ -34,13 +34,20 @@ function F() {
       m.dock.setIcon(s);
     } catch {
     }
-  const n = process.env.VITE_DEV_SERVER_URL;
-  if (n ? d.loadURL(n) : d.loadFile(t.join(w, "../dist/index.html")), !m.isPackaged)
+  const o = process.env.VITE_DEV_SERVER_URL;
+  if (o ? d.loadURL(o) : d.loadFile(t.join(w, "../dist/index.html")), !m.isPackaged)
     try {
       d.webContents.openDevTools({ mode: "detach" });
     } catch {
     }
-  if (process.platform === "darwin")
+  if (d.webContents.setWindowOpenHandler(({ url: r }) => {
+    try {
+      if (r.startsWith("http://") || r.startsWith("https://"))
+        return S.openExternal(r), { action: "deny" };
+    } catch {
+    }
+    return { action: "deny" };
+  }), process.platform === "darwin")
     try {
       d.setTitleBarOverlay({
         color: "#00000000",
@@ -127,8 +134,8 @@ m.whenReady().then(() => {
           }
         ]
       }
-    ], n = y.buildFromTemplate(e);
-    y.setApplicationMenu(n);
+    ], o = y.buildFromTemplate(e);
+    y.setApplicationMenu(o);
   }
 });
 m.setAboutPanelOptions?.({
@@ -157,16 +164,16 @@ function p() {
     return {};
   }
 }
-function D(s) {
+function W(s) {
   try {
     const e = b();
     i.mkdirSync(t.dirname(e), { recursive: !0 }), i.writeFileSync(e, JSON.stringify(s, null, 2), "utf-8");
   } catch {
   }
 }
-async function O(s) {
-  const e = t.join(s, "templates"), n = t.join(s, "daily tasks"), o = t.join(s, "backgrounds"), a = t.join(s, "settings.json");
-  await i.promises.mkdir(e, { recursive: !0 }), await i.promises.mkdir(n, { recursive: !0 }), await i.promises.mkdir(o, { recursive: !0 });
+async function D(s) {
+  const e = t.join(s, "templates"), o = t.join(s, "daily tasks"), r = t.join(s, "backgrounds"), a = t.join(s, "settings.json");
+  await i.promises.mkdir(e, { recursive: !0 }), await i.promises.mkdir(o, { recursive: !0 }), await i.promises.mkdir(r, { recursive: !0 });
   try {
     await i.promises.access(a, i.constants.F_OK);
   } catch {
@@ -177,28 +184,28 @@ async function O(s) {
 u.handle("get-saved-folder", async () => (console.log("ipc:get-saved-folder"), p().selectedFolder ?? null));
 u.handle("select-folder", async () => {
   if (console.log("ipc:select-folder invoked"), !d) return null;
-  const s = await S.showOpenDialog(d, {
+  const s = await P.showOpenDialog(d, {
     properties: ["openDirectory", "createDirectory"]
   });
   if (s.canceled || s.filePaths.length === 0) return null;
   const e = s.filePaths[0];
   try {
-    await O(e);
+    await D(e);
   } catch {
   }
-  const n = p();
-  return D({ ...n, selectedFolder: e }), console.log("ipc:select-folder selected:", e), { folderPath: e };
+  const o = p();
+  return W({ ...o, selectedFolder: e }), console.log("ipc:select-folder selected:", e), { folderPath: e };
 });
 u.handle("list-daily-tasks", async () => {
   const e = p().selectedFolder;
   if (!e) return [];
-  const n = t.join(e, "daily tasks");
+  const o = t.join(e, "daily tasks");
   try {
-    return (await i.promises.readdir(n, {
+    return (await i.promises.readdir(o, {
       withFileTypes: !0
-    })).filter((r) => r.isFile() && r.name.toLowerCase().endsWith(".json")).map((r) => ({
-      fileName: r.name.replace(/\.json$/i, ""),
-      fullPath: t.join(n, r.name)
+    })).filter((n) => n.isFile() && n.name.toLowerCase().endsWith(".json")).map((n) => ({
+      fileName: n.name.replace(/\.json$/i, ""),
+      fullPath: t.join(o, n.name)
     }));
   } catch {
     return [];
@@ -207,13 +214,13 @@ u.handle("list-daily-tasks", async () => {
 u.handle("list-templates", async () => {
   const e = p().selectedFolder;
   if (!e) return [];
-  const n = t.join(e, "templates");
+  const o = t.join(e, "templates");
   try {
-    return (await i.promises.readdir(n, {
+    return (await i.promises.readdir(o, {
       withFileTypes: !0
-    })).filter((r) => r.isFile() && r.name.toLowerCase().endsWith(".json")).map((r) => ({
-      fileName: r.name.replace(/\.json$/i, ""),
-      fullPath: t.join(n, r.name)
+    })).filter((n) => n.isFile() && n.name.toLowerCase().endsWith(".json")).map((n) => ({
+      fileName: n.name.replace(/\.json$/i, ""),
+      fullPath: t.join(o, n.name)
     }));
   } catch {
     return [];
@@ -223,15 +230,15 @@ u.handle("list-backgrounds", async () => {
   const e = p().selectedFolder;
   if (!e)
     return [];
-  const n = t.join(e, "backgrounds");
+  const o = t.join(e, "backgrounds");
   try {
-    const o = await i.promises.readdir(n, {
+    const r = await i.promises.readdir(o, {
       withFileTypes: !0
-    }), a = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"], r = o.filter(
+    }), a = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"], n = r.filter(
       (c) => c.isFile() && a.includes(t.extname(c.name).toLowerCase())
-    ).map((c) => t.join(n, c.name));
+    ).map((c) => t.join(o, c.name));
     return await Promise.all(
-      r.map(async (c) => {
+      n.map(async (c) => {
         try {
           const g = await i.promises.readFile(c), f = t.extname(c).toLowerCase(), h = f === ".png" ? "image/png" : f === ".gif" ? "image/gif" : f === ".webp" ? "image/webp" : f === ".svg" ? "image/svg+xml" : "image/jpeg", j = g.toString("base64"), k = `data:${h};base64,${j}`;
           return { fileName: t.basename(c), fullPath: c, url: k };
@@ -246,10 +253,10 @@ u.handle("list-backgrounds", async () => {
 });
 u.handle("get-background-data-url", async (s, e) => {
   try {
-    const o = p().selectedFolder;
-    if (!o) return null;
-    const a = t.resolve(e), r = t.resolve(o);
-    if (!a.startsWith(r)) return null;
+    const r = p().selectedFolder;
+    if (!r) return null;
+    const a = t.resolve(e), n = t.resolve(r);
+    if (!a.startsWith(n)) return null;
     const l = t.extname(a).toLowerCase();
     if (![".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(l)) return null;
     const g = await i.promises.readFile(a), f = l === ".png" ? "image/png" : l === ".gif" ? "image/gif" : l === ".webp" ? "image/webp" : l === ".svg" ? "image/svg+xml" : "image/jpeg", h = g.toString("base64");
@@ -262,10 +269,10 @@ u.handle("read-root-settings", async () => {
   try {
     const e = p().selectedFolder;
     if (!e) return {};
-    const n = t.join(e, "settings.json");
+    const o = t.join(e, "settings.json");
     try {
-      const o = await i.promises.readFile(n, "utf-8");
-      return JSON.parse(o);
+      const r = await i.promises.readFile(o, "utf-8");
+      return JSON.parse(r);
     } catch {
       return {};
     }
@@ -277,17 +284,17 @@ u.handle(
   "write-root-settings",
   async (s, e) => {
     try {
-      const o = p().selectedFolder;
-      if (!o) return !1;
-      const a = t.join(o, "settings.json");
-      let r = {};
+      const r = p().selectedFolder;
+      if (!r) return !1;
+      const a = t.join(r, "settings.json");
+      let n = {};
       try {
         const g = await i.promises.readFile(a, "utf-8");
-        r = JSON.parse(g);
+        n = JSON.parse(g);
       } catch {
-        r = {};
+        n = {};
       }
-      const l = { ...r, ...e ?? {} }, c = JSON.stringify(l, null, 2) + `
+      const l = { ...n, ...e ?? {} }, c = JSON.stringify(l, null, 2) + `
 `;
       return await i.promises.writeFile(a, c, "utf-8"), !0;
     } catch {
@@ -303,10 +310,10 @@ m.on("activate", () => {
 });
 u.handle("read-json-file", async (s, e) => {
   try {
-    const o = p().selectedFolder;
-    if (!o) return null;
-    const a = t.resolve(e), r = t.resolve(o);
-    if (!a.startsWith(r) || !a.toLowerCase().endsWith(".json")) return null;
+    const r = p().selectedFolder;
+    if (!r) return null;
+    const a = t.resolve(e), n = t.resolve(r);
+    if (!a.startsWith(n) || !a.toLowerCase().endsWith(".json")) return null;
     const l = await i.promises.readFile(a, "utf-8");
     return JSON.parse(l);
   } catch {
@@ -318,11 +325,11 @@ u.handle(
   async (s, e) => {
     try {
       if (!e || !e.fullPath) return !1;
-      const { fullPath: n, data: o } = e, r = p().selectedFolder;
-      if (!r) return !1;
-      const l = t.resolve(n), c = t.resolve(r);
+      const { fullPath: o, data: r } = e, n = p().selectedFolder;
+      if (!n) return !1;
+      const l = t.resolve(o), c = t.resolve(n);
       if (!l.startsWith(c) || !l.toLowerCase().endsWith(".json")) return !1;
-      const g = JSON.stringify(o, null, 2) + `
+      const g = JSON.stringify(r, null, 2) + `
 `;
       return await i.promises.writeFile(l, g, "utf-8"), !0;
     } catch {
@@ -332,10 +339,10 @@ u.handle(
 );
 u.handle("delete-json-file", async (s, e) => {
   try {
-    const o = p().selectedFolder;
-    if (!o) return !1;
-    const a = t.resolve(e), r = t.resolve(o);
-    return !a.startsWith(r) || !a.toLowerCase().endsWith(".json") ? !1 : (await i.promises.unlink(a), !0);
+    const r = p().selectedFolder;
+    if (!r) return !1;
+    const a = t.resolve(e), n = t.resolve(r);
+    return !a.startsWith(n) || !a.toLowerCase().endsWith(".json") ? !1 : (await i.promises.unlink(a), !0);
   } catch {
     return !1;
   }
@@ -345,11 +352,11 @@ u.handle(
   async (s, e) => {
     try {
       if (!e) return !1;
-      const { oldFullPath: n, newBaseName: o } = e, r = p().selectedFolder;
-      if (!r) return !1;
-      const l = t.resolve(n), c = t.resolve(r);
+      const { oldFullPath: o, newBaseName: r } = e, n = p().selectedFolder;
+      if (!n) return !1;
+      const l = t.resolve(o), c = t.resolve(n);
       if (!l.startsWith(c) || !l.toLowerCase().endsWith(".json")) return !1;
-      const g = t.dirname(l), f = o.trim().replace(/[\\\/:*?"<>|]/g, "").replace(/\s+/g, " ").slice(0, 120);
+      const g = t.dirname(l), f = r.trim().replace(/[\\\/:*?"<>|]/g, "").replace(/\s+/g, " ").slice(0, 120);
       if (!f) return !1;
       const h = t.join(g, `${f}.json`);
       if (t.basename(l).toLowerCase() === `${f}.json`.toLowerCase())
