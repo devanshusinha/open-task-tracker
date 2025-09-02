@@ -364,6 +364,26 @@ function App() {
   const [templateFiles, setTemplateFiles] = useState<
     { name: string; path: string; createdAt?: string }[]
   >([]);
+  const sortedDailyTaskFiles = useMemo(
+    () =>
+      [...dailyTaskFiles].sort((a, b) => {
+        const at = a.createdAt ? Date.parse(a.createdAt) : 0;
+        const bt = b.createdAt ? Date.parse(b.createdAt) : 0;
+        if (bt !== at) return bt - at;
+        return a.name.localeCompare(b.name);
+      }),
+    [dailyTaskFiles]
+  );
+  const sortedTemplateFiles = useMemo(
+    () =>
+      [...templateFiles].sort((a, b) => {
+        const at = a.createdAt ? Date.parse(a.createdAt) : 0;
+        const bt = b.createdAt ? Date.parse(b.createdAt) : 0;
+        if (bt !== at) return bt - at;
+        return a.name.localeCompare(b.name);
+      }),
+    [templateFiles]
+  );
   const [dailyProgress, setDailyProgress] = useState<
     { date: string; total: number; completed: number; percent: number }[]
   >([]);
@@ -2403,7 +2423,7 @@ function App() {
                             {dailyTaskFiles.length === 0 ? (
                               <div>No tasks yet</div>
                             ) : (
-                              dailyTaskFiles.map((f) => (
+                              sortedDailyTaskFiles.map((f) => (
                                 <div
                                   key={f.path}
                                   className="relative group rounded-sm"
@@ -2477,7 +2497,7 @@ function App() {
                                 No templates yet
                               </div>
                             ) : (
-                              templateFiles.map((f) => (
+                              sortedTemplateFiles.map((f) => (
                                 <div
                                   key={f.path}
                                   className="relative group rounded-sm"
@@ -2796,7 +2816,7 @@ function App() {
                                             No templates yet
                                           </div>
                                         ) : (
-                                          templateFiles.map((f) => (
+                                          sortedTemplateFiles.map((f) => (
                                             <button
                                               key={f.path}
                                               className="w-full text-left rounded-sm px-2 py-1 hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-white/20"
@@ -2824,7 +2844,7 @@ function App() {
                                           No daily lists yet
                                         </div>
                                       ) : (
-                                        dailyTaskFiles.map((f) => (
+                                        sortedDailyTaskFiles.map((f) => (
                                           <button
                                             key={f.path}
                                             className="w-full text-left rounded-sm px-2 py-1 hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-white/20"
